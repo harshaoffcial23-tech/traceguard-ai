@@ -1,0 +1,7 @@
+Confidential Internal Project Roadmap - Q4 2026
+Objective: Harden tool-use gateway against dynamic adversarial prompt injections.
+Milestones:
+1. Complete strict path confinement and SQL AST policy verification.
+2. Verify zero exfiltration through side-channel emails.
+3. Complete red-teaming benchmark against LLM Top 10 vulnerabilities.
+Team Lead: secops@traceguard.internal

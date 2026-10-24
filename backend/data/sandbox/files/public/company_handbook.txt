@@ -1,0 +1,6 @@
+TraceGuard AI Employee Handbook (Public)
+Version: 2026.1
+Welcome to TraceGuard AI! This document outlines general workplace guidelines and safety practices.
+Core values: Security first, transparency, zero unauthorized exfiltration.
+Office hours: 9:00 AM - 5:00 PM EST.
+Emergency IT Helpdesk: helpdesk@traceguard.internal
