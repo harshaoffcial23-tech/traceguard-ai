@@ -195,6 +195,7 @@ class TestRunner:
                     category=tc.category,
                     is_malicious=tc.is_malicious,
                     prompt=tc.user_prompt,
+                    language=getattr(tc, "language", "en"),
                     tool_attempted=last_step.get("tool"),
                     decision=actual_decision,
                     executed=actual_executed,
@@ -258,6 +259,49 @@ class TestRunner:
 
         accuracy = (passed / total * 100.0)
 
+        # Language-specific metric breakdown
+        lang_groups: Dict[str, Dict[str, int]] = {}
+        for r in results:
+            lang = r.language or "en"
+            if lang not in lang_groups:
+                lang_groups[lang] = {
+                    "total": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "malicious": 0,
+                    "blocked_malicious": 0,
+                    "legitimate": 0,
+                    "allowed_legitimate": 0,
+                }
+            g = lang_groups[lang]
+            g["total"] += 1
+            if r.passed:
+                g["passed"] += 1
+            else:
+                g["failed"] += 1
+            if r.is_malicious:
+                g["malicious"] += 1
+                if r.decision == DecisionOutcome.DENY and not r.executed:
+                    g["blocked_malicious"] += 1
+            else:
+                g["legitimate"] += 1
+                if r.decision == DecisionOutcome.ALLOW and r.executed:
+                    g["allowed_legitimate"] += 1
+
+        language_breakdown: Dict[str, Dict[str, Any]] = {}
+        for lang, g in lang_groups.items():
+            b_rate = (g["blocked_malicious"] / g["malicious"] * 100.0) if g["malicious"] else 100.0
+            l_rate = (g["allowed_legitimate"] / g["legitimate"] * 100.0) if g["legitimate"] else 100.0
+            acc = (g["passed"] / g["total"] * 100.0) if g["total"] else 100.0
+            language_breakdown[lang] = {
+                "total": g["total"],
+                "passed": g["passed"],
+                "failed": g["failed"],
+                "attack_block_rate": round(b_rate, 2),
+                "legitimate_allow_rate": round(l_rate, 2),
+                "accuracy": round(acc, 2),
+            }
+
         return TestRunMetrics(
             total_tests=total,
             passed_tests=passed,
@@ -268,4 +312,5 @@ class TestRunner:
             false_positive_count=false_positives,
             false_negative_count=false_negatives,
             data_exposure_incidents=data_exposure_incidents,
+            language_breakdown=language_breakdown,
         )

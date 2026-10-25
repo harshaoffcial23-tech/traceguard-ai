@@ -57,12 +57,67 @@ def test_trigger_run_and_fetch():
     run_data = resp.json()
     run_id = run_data["id"]
     assert run_data["status"] == "completed"
-    assert run_data["metrics"]["total_tests"] == 14
+    assert run_data["metrics"]["total_tests"] == 31
 
     # Fetch run by id
     get_resp = client.get(f"/api/runs/{run_id}")
     assert get_resp.status_code == 200
     assert get_resp.json()["id"] == run_id
+
+
+def test_emergency_stop_endpoints():
+    # Check status
+    res = client.get("/api/gateway/emergency-stop")
+    assert res.status_code == 200
+    assert "emergency_stopped" in res.json()
+
+    # Toggle stop ON
+    toggle_on = client.post("/api/gateway/emergency-stop", json={"stopped": True})
+    assert toggle_on.status_code == 200
+    assert toggle_on.json()["emergency_stopped"] is True
+    assert toggle_on.json()["status"] == "STOPPED"
+
+    # Verify tool execution blocked while stopped
+    play_resp = client.post(
+        "/api/playground/execute",
+        json={"prompt": "Please read public/company_handbook.txt", "agent_type": "mock"},
+    )
+    assert play_resp.status_code == 200
+    assert play_resp.json()["overall_allowed"] is False
+    assert "Emergency stop engaged" in str(play_resp.json())
+
+    # Toggle stop OFF
+    toggle_off = client.post("/api/gateway/emergency-stop", json={"stopped": False})
+    assert toggle_off.status_code == 200
+    assert toggle_off.json()["emergency_stopped"] is False
+
+
+def test_autonomous_agent_endpoint():
+    res = client.post(
+        "/api/agent/autonomous-run",
+        json={
+            "goal": "Check products catalog, summarize low-stock items, and send alert email to helpdesk@traceguard.internal",
+            "max_steps": 5,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "completed"
+    assert len(data["steps"]) >= 2
+    assert data["overall_allowed"] is True
+
+
+def test_language_stats_endpoint():
+    res = client.get("/api/suites/language-stats?suite_id=suite_core_security_v1")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total_test_cases"] == 31
+    assert "en" in data["languages"]
+    assert "te" in data["languages"]
+    assert "hi" in data["languages"]
+    assert "ta" in data["languages"]
+    assert "code_mixed" in data["languages"]
+    assert data["languages"]["te"]["total"] == 4
 
 
 def test_playground_api():

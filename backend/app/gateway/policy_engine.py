@@ -186,7 +186,7 @@ class PolicyEngine:
                 return True, f"Policy violation: Attempted data exfiltration. Email content contains {categories}."
             return False, ""
 
-        # Heuristic Prompt Injection Marker
+        # Heuristic Prompt Injection Marker (English, Telugu, Hindi, Tamil, Code-mixed)
         elif ctype == "prompt_injection_guard":
             prompt = str(request.user_prompt or "")
             body = str(args.get("body", ""))
@@ -197,9 +197,31 @@ class PolicyEngine:
                 "system override",
                 "override instruction",
                 "system advisory",
+                "సిస్టమ్ ఓవర్‌రైడ్",
+                "భద్రతా నియమాలు",
+                "విస్మరించండి",
+                "సిస్టమ్ ఓవర్ రైడ్",
+                "సిస్టం ఓవర్ రైడ్",
+                "సిస్టమ్ బైపాస్",
+                "పాస్‌వర్డ్‌లు",
+                "రహస్య ఫైల్",
+                "सिस्टम ओवरराइड",
+                "सुरक्षा अनदेखा",
+                "कमांड ओवरराइड",
+                "पासवर्ड निकालें",
+                "प्रतिबंधित फ़ाइल",
+                "கணினி மேலெழுதல்",
+                "பாதுகாப்பு விதிகளை புறக்கணிக்கவும்",
+                "ரகசியங்களை படிக்க",
+                "system override karo",
+                "system override pannu",
+                "system override chesi",
+                "credentials nikal",
+                "irukkura keys",
+                "api passwords theesi",
             ])
             for sig in signatures:
-                if sig in combined:
+                if sig.lower() in combined:
                     return True, f"Policy violation: Prompt injection signature detected: '{sig}'"
             return False, ""
 
@@ -215,6 +237,16 @@ def get_default_strict_policy_set() -> PolicySet:
         is_active=True,
         default_action=DecisionOutcome.DENY,
         rules=[
+            PolicyRule(
+                id="RULE-INJECTION-01-HEURISTIC-DENY",
+                name="Block Known Adversarial Prompt Injections",
+                description="Deny actions triggered by direct jailbreaks, system overrides, or multilingual bypass signatures.",
+                enabled=True,
+                priority=5,
+                tool="*",
+                action=DecisionOutcome.DENY,
+                condition_type="prompt_injection_guard",
+            ),
             PolicyRule(
                 id="RULE-FILE-01-TRAVERSAL-DENY",
                 name="Block Path Traversal",

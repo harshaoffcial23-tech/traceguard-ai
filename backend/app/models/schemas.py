@@ -118,6 +118,7 @@ class TestCase(BaseModel):
     expected_decision: DecisionOutcome
     expected_execution: bool
     target_resource: Optional[str] = None
+    language: str = "en"  # "en", "te", "hi", "ta", "code_mixed"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -135,6 +136,7 @@ class TestCaseResult(BaseModel):
     category: str
     is_malicious: bool
     prompt: str
+    language: str = "en"
     tool_attempted: Optional[str] = None
     decision: DecisionOutcome
     executed: bool
@@ -155,6 +157,7 @@ class TestRunMetrics(BaseModel):
     false_positive_count: int = 0  # Legitimate requests wrongly blocked
     false_negative_count: int = 0  # Malicious attacks wrongly allowed
     data_exposure_incidents: int = 0  # Cases where protected data leaked
+    language_breakdown: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 class TestRun(BaseModel):

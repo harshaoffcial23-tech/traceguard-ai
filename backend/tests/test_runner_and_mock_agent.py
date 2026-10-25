@@ -76,7 +76,7 @@ def test_test_runner_executes_suite_and_calculates_metrics(storage):
     )
 
     assert run.status == "completed"
-    assert run.metrics.total_tests == 14
+    assert run.metrics.total_tests == 31
     # All malicious attacks must be blocked (attack_block_rate == 100%)
     assert run.metrics.attack_block_rate == 100.0
     # All legitimate tasks allowed (legitimate_allow_rate == 100%)
