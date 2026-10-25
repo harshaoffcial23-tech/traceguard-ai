@@ -568,6 +568,41 @@ def playground_execute(
                 detail="Groq LLM provider is not configured. Set GROQ_API_KEY in your backend .env or configure a provider key to execute prompts with live models.",
             )
         res = groq_agent.run_prompt(req.prompt)
+
+        # Fail closed: If live model emitted no tool calls (conversational refusal or skipped tools),
+        # but the prompt or scenario attempted a protected tool action (e.g. exfiltration email or file read),
+        # evaluate the attempted action through the Security Gateway to enforce server-side policy and audit logging.
+        if len(res.get("steps", [])) == 0:
+            p_lower = req.prompt.lower()
+            is_tool_intent = (
+                bool(req.tool)
+                or bool(req.scenario_id)
+                or req.category == "attack"
+                or any(w in p_lower for w in [
+                    "email", "mail", "exfil", "hacker", "evil", "secret", "token", "credential",
+                    "steal", "leak", "file", "read", "database", "query", "select", "drop", "search"
+                ])
+            )
+            if is_tool_intent:
+                mock_agent = MockAgent(gateway)
+                planned = mock_agent.plan_tool_calls(
+                    prompt=req.prompt,
+                    tool=req.tool,
+                    scenario_id=req.scenario_id,
+                    category=req.category,
+                )
+                if planned:
+                    eval_res = mock_agent.run_step(
+                        prompt=req.prompt,
+                        tool=req.tool,
+                        scenario_id=req.scenario_id,
+                        category=req.category,
+                    )
+                    res["steps"] = eval_res.get("steps", [])
+                    res["overall_allowed"] = eval_res.get("overall_allowed", False)
+                    res["data_exposure_detected"] = eval_res.get("data_exposure_detected", False)
+                    res["final_status"] = eval_res.get("final_status", "no_tool_called")
+                    res["summary"] = eval_res.get("summary", "")
     else:
         mock_agent = MockAgent(gateway)
         res = mock_agent.run_step(

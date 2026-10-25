@@ -104,10 +104,13 @@ class SecurityGateway:
 
     def get_or_create_session(self, session_id: Optional[str]) -> SessionTracker:
         with self._lock:
-            sid = session_id or "default_session"
-            if sid not in self.sessions:
+            if not session_id:
+                sid = f"req_{uuid.uuid4().hex[:12]}"
                 self.sessions[sid] = SessionTracker(sid)
-            return self.sessions[sid]
+                return self.sessions[sid]
+            if session_id not in self.sessions:
+                self.sessions[session_id] = SessionTracker(session_id)
+            return self.sessions[session_id]
 
     def reset_session(self, session_id: str) -> None:
         with self._lock:
@@ -287,11 +290,12 @@ class SecurityGateway:
         # 2. Session Limit Checks
         # A. Already Terminated Session
         if session.is_terminated:
+            is_timeout_term = "timeout" in (session.termination_reason or "").lower()
             decision = GatewayDecision(
                 allowed=False,
-                decision=DecisionOutcome.DENY,
+                decision=DecisionOutcome.TIMEOUT if is_timeout_term else DecisionOutcome.DENY,
                 policy_id=self.policy_engine.policy_set.id,
-                rule_id="SESSION_TERMINATED",
+                rule_id="SESSION_TIMEOUT" if is_timeout_term else "SESSION_TERMINATED",
                 reason=f"Session halted: {session.termination_reason}",
                 violations=[f"Session {session.session_id} is terminated"],
             )
@@ -306,7 +310,7 @@ class SecurityGateway:
             session.termination_reason = f"Execution timeout ({self.max_session_duration_seconds}s exceeded)"
             decision = GatewayDecision(
                 allowed=False,
-                decision=DecisionOutcome.DENY,
+                decision=DecisionOutcome.TIMEOUT,
                 policy_id=self.policy_engine.policy_set.id,
                 rule_id="TIMEOUT_LIMIT_EXCEEDED",
                 reason=f"Execution timeout: Session exceeded maximum execution time ({self.max_session_duration_seconds}s).",
@@ -449,10 +453,11 @@ class SecurityGateway:
         test_run_id: Optional[str],
         test_case_id: Optional[str],
     ) -> Tuple[GatewayDecision, ToolExecutionResult, AuditEvent]:
+        is_timeout = decision.decision == DecisionOutcome.TIMEOUT
         exec_res = ToolExecutionResult(
             executed=False,
             success=False,
-            error=f"Blocked by Security Gateway: {decision.reason}",
+            error=f"Timeout: {decision.reason}" if is_timeout else f"Blocked by Security Gateway: {decision.reason}",
             metadata={"rule_id": decision.rule_id, "policy_id": decision.policy_id},
         )
         audit_role = self.trusted_identity_roles.get(request.agent_type, "guest")
@@ -476,7 +481,7 @@ class SecurityGateway:
             execution_success=False,
             execution_error=decision.reason,
             data_exposure_detected=False,
-            exposure_details=["Blocked prior to execution by gateway limit/kill-switch"],
+            exposure_details=["Execution timed out prior to tool completion"] if is_timeout else ["Blocked prior to execution by gateway limit/kill-switch"],
             execution_output_redacted=None,
             context=redact_value(request.context),
         )

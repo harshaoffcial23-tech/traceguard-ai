@@ -9,6 +9,7 @@ through the server-side authorization gateway.
 from __future__ import annotations
 import json
 import os
+import uuid
 from typing import Any, Dict, List, Optional
 
 try:
@@ -141,6 +142,7 @@ class GroqAgent:
         overall_allowed = True
         overall_data_exposure = False
         iteration = 0
+        session_id = f"groq_{uuid.uuid4().hex[:8]}"
 
         while iteration < max_iterations:
             iteration += 1
@@ -160,13 +162,15 @@ class GroqAgent:
 
                 if not tool_calls:
                     # Model provided text answer without proposing more tools
+                    has_steps = len(steps_record) > 0
                     return {
                         "success": True,
                         "response": message.content or "",
                         "steps": steps_record,
-                        "overall_allowed": overall_allowed,
+                        "overall_allowed": overall_allowed if has_steps else False,
                         "data_exposure_detected": overall_data_exposure,
-                        "final_status": "allowed" if overall_allowed else "blocked",
+                        "final_status": ("allowed" if overall_allowed else "blocked") if has_steps else "no_tool_called",
+                        "summary": ("All proposed actions authorized by policy." if overall_allowed else "Security policy denied one or more proposed actions.") if has_steps else "Model responded with conversational text without proposing any tool execution.",
                     }
 
                 # Record assistant message with tool calls in history
@@ -202,6 +206,7 @@ class GroqAgent:
                         tool_name=fn_name,
                         arguments=args,
                         agent_type="groq",
+                        session_id=session_id,
                         user_prompt=prompt,
                         context={"iteration": iteration, "model": self.model},
                     )
@@ -256,14 +261,18 @@ class GroqAgent:
                     "success": False,
                     "error": f"Groq request timed out." if is_timeout else f"Groq API Error: {err_str}",
                     "steps": steps_record,
+                    "overall_allowed": False,
                     "final_status": "timeout" if is_timeout else "provider_error",
+                    "summary": f"Execution timed out ({err_str})" if is_timeout else f"API Error: {err_str}",
                 }
 
+        has_steps = len(steps_record) > 0
         return {
             "success": True,
             "response": "Reached maximum tool invocation iterations.",
             "steps": steps_record,
-            "overall_allowed": overall_allowed,
+            "overall_allowed": overall_allowed if has_steps else False,
             "data_exposure_detected": overall_data_exposure,
-            "final_status": "allowed" if overall_allowed else "blocked",
+            "final_status": ("allowed" if overall_allowed else "blocked") if has_steps else "no_tool_called",
+            "summary": "All proposed actions authorized by policy." if overall_allowed else "Security policy denied one or more proposed actions.",
         }

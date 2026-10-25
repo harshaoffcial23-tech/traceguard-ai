@@ -12,6 +12,8 @@ class DecisionOutcome(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
     ESCALATE = "escalate"
+    TIMEOUT = "timeout"
+    ERROR = "error"
 
 
 class UserRole(str, Enum):

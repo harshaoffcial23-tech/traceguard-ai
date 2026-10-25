@@ -17,6 +17,7 @@ import {
   Sliders,
   Check,
   Layers,
+  AlertTriangle,
 } from 'lucide-react';
 import { PolicySet } from '../types';
 import { executePlayground } from '../services/api';
@@ -154,10 +155,13 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ policies }) => {
   };
 
   const step = result?.steps && result.steps.length > 0 ? result.steps[0] : null;
+  const isTimeout = step?.decision === 'timeout' || result?.final_status === 'timeout';
   const isBlocked = step ? step.decision === 'deny' : result?.final_status === 'blocked';
-  const isAllowed = step ? step.decision === 'allow' : result?.final_status === 'allowed';
+  // Never show ALLOW unless a concrete tool call was evaluated and authorized by the backend!
+  const isAllowed = !isTimeout && !isBlocked && !!step && step.decision === 'allow' && result?.overall_allowed !== false;
+  const isNoAction = !isTimeout && !isBlocked && !isAllowed;
   const wasExecuted = step ? step.executed : false;
-  const decisionReason = step?.reason || result?.summary || 'No explanation returned.';
+  const decisionReason = step?.reason || result?.summary || result?.error || 'No explanation returned.';
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-2">
@@ -304,16 +308,24 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ policies }) => {
           {/* Outcome Header Banner */}
           <div
             className={`p-5 sm:p-6 border-l-4 flex items-start gap-4 ${
-              isBlocked
+              isTimeout
+                ? 'border-l-amber-500 bg-amber-950/20'
+                : isBlocked
                 ? 'border-l-[#EF4444] bg-red-950/20'
-                : 'border-l-[#C7F36B] bg-emerald-950/20'
+                : isAllowed
+                ? 'border-l-[#C7F36B] bg-emerald-950/20'
+                : 'border-l-slate-500 bg-slate-900/30'
             }`}
           >
             <div className="mt-0.5">
-              {isBlocked ? (
+              {isTimeout ? (
+                <AlertTriangle className="w-6 h-6 text-amber-400" />
+              ) : isBlocked ? (
                 <ShieldAlert className="w-6 h-6 text-[#EF4444]" />
-              ) : (
+              ) : isAllowed ? (
                 <ShieldCheck className="w-6 h-6 text-[#C7F36B]" />
+              ) : (
+                <Terminal className="w-6 h-6 text-slate-400" />
               )}
             </div>
 
@@ -321,18 +333,32 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ policies }) => {
               <div className="flex items-center gap-3">
                 <span
                   className={`text-xs font-mono font-bold uppercase tracking-wider px-3 py-1 rounded-full ${
-                    isBlocked
+                    isTimeout
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : isBlocked
                       ? 'bg-red-500/20 text-red-300 border border-red-500/40'
-                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : isAllowed
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-slate-500/20 text-slate-300 border border-slate-500/40'
                   }`}
                 >
-                  {isBlocked ? 'ACTION INTERCEPTED & BLOCKED' : 'ACTION VERIFIED & ALLOWED'}
+                  {isTimeout
+                    ? 'EXECUTION TIMEOUT / SYSTEM ERROR'
+                    : isBlocked
+                    ? 'ACTION INTERCEPTED & BLOCKED'
+                    : isAllowed
+                    ? 'ACTION VERIFIED & ALLOWED'
+                    : 'NO ACTION / NOT EXECUTED'}
                 </span>
 
                 <span className="text-xs text-[#8E969E]">
-                  {isBlocked
+                  {isTimeout
+                    ? 'Execution threshold exceeded prior to tool completion'
+                    : isBlocked
                     ? 'Deterministic policy invariant halted execution'
-                    : 'All policy invariants satisfied'}
+                    : isAllowed
+                    ? 'All policy invariants satisfied'
+                    : 'No tool invocation proposed or authorized'}
                 </span>
               </div>
 
@@ -350,10 +376,22 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ policies }) => {
               </div>
               <div
                 className={`text-base font-mono font-semibold mt-1 ${
-                  isBlocked ? 'text-[#EF4444]' : 'text-[#C7F36B]'
+                  isTimeout
+                    ? 'text-amber-400'
+                    : isBlocked
+                    ? 'text-[#EF4444]'
+                    : isAllowed
+                    ? 'text-[#C7F36B]'
+                    : 'text-slate-400'
                 }`}
               >
-                {step?.decision?.toUpperCase() || (isBlocked ? 'DENY' : 'ALLOW')}
+                {isTimeout
+                  ? 'TIMEOUT'
+                  : isBlocked
+                  ? (step?.decision?.toUpperCase() || 'DENY')
+                  : isAllowed
+                  ? 'ALLOW'
+                  : 'NO ACTION'}
               </div>
             </div>
 
@@ -362,7 +400,13 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ policies }) => {
                 2. Tool Execution
               </div>
               <div className="text-base font-mono font-semibold mt-1 text-white">
-                {wasExecuted ? 'Executed: Yes' : 'Executed: No (Neutralized)'}
+                {wasExecuted
+                  ? 'Executed: Yes'
+                  : isTimeout
+                  ? 'Executed: No (Timed Out)'
+                  : isBlocked
+                  ? 'Executed: No (Neutralized)'
+                  : 'Executed: No (No Action)'}
               </div>
             </div>
 

@@ -409,13 +409,14 @@ class MockAgent:
                     if inj_audit.data_exposure_detected:
                         overall_data_exposure = True
 
+        has_steps = len(steps_record) > 0
         return {
             "prompt": prompt,
             "steps": steps_record,
-            "overall_allowed": overall_allowed,
+            "overall_allowed": overall_allowed if has_steps else False,
             "data_exposure_detected": overall_data_exposure,
-            "final_status": "allowed" if overall_allowed else "blocked",
-            "summary": "All proposed actions authorized by policy." if overall_allowed else f"Action blocked: {steps_record[0]['reason'] if steps_record else 'Policy denied'}",
+            "final_status": ("allowed" if overall_allowed else "blocked") if has_steps else "no_tool_called",
+            "summary": ("All proposed actions authorized by policy." if overall_allowed else f"Action blocked: {steps_record[0]['reason'] if steps_record else 'Policy denied'}") if has_steps else "No tool action was requested or identified.",
         }
 
     def _extract_indirect_injection(self, content: str) -> Optional[ToolCall]:
