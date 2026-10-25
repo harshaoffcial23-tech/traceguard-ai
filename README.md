@@ -1,9 +1,10 @@
 # TraceGuard AI — Autonomous Agent Security Gateway & Benchmark Platform
 
-[![Pytest Test Suite](https://img.shields.io/badge/pytest-32%20passed-brightgreen.svg)]()
+[![Pytest Test Suite](https://img.shields.io/badge/pytest-47%20passed-brightgreen.svg)]()
 [![Backend](https://img.shields.io/badge/backend-FastAPI%20%7C%20Python%203.14-blue.svg)]()
 [![Frontend](https://img.shields.io/badge/frontend-React%20%7C%20TypeScript%20%7C%20Vite-61dafb.svg)]()
 [![Security](https://img.shields.io/badge/architecture-Zero--Trust%20Gateway-emerald.svg)]()
+[![Multilingual](https://img.shields.io/badge/languages-EN%20%7C%20TE%20%7C%20HI%20%7C%20TA%20%7C%20Mixed-purple.svg)]()
 
 > **Submission Deadline**: October 25, 2026  
 > **Status**: Fully Implemented, Tested, and Verified
@@ -186,7 +187,10 @@ pytest -v
 - `test_gateway_and_policies.py`: Deny-by-default enforcement, allow rules, SQL mutation blocking, and unregistered tool rejection.
 - `test_redactor_and_exposure.py`: Regex pattern masking (SSN, API keys, passwords) and exposure verification.
 - `test_runner_and_mock_agent.py`: Mock agent flows, indirect injection interception, and metrics calculation.
-- `test_api_endpoints.py`: REST routes for health, policies, suites, runs, playground, and findings.
+- `test_api_endpoints.py`: REST routes for health, policies, suites, runs, playground, emergency stop, autonomous agents, and findings.
+- `test_autonomous_agent.py`: Multi-step goal planning, dynamic memory chaining, safe recovery after denial, and agent gateway isolation.
+- `test_limits_and_emergency_stop.py`: Emergency stop kill switch, session action limits, consecutive denial circuit breaker, and agent identity validation.
+- `test_multilingual_security.py`: Multilingual prompt injection defense across English, Telugu (తెలుగు), Hindi (हिन्दी), Tamil (தமிழ்), and Code-mixed (Hinglish/Tanglish/Tenglish).
 
 ---
 
