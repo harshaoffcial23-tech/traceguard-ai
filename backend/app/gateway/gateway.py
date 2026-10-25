@@ -13,6 +13,7 @@ Enforces:
 
 from __future__ import annotations
 import datetime
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -25,11 +26,12 @@ from app.models.schemas import (
 )
 from app.gateway.policy_engine import PolicyEngine, get_default_strict_policy_set
 from app.gateway.redactor import hash_arguments, inspect_data_exposure, redact_value
+from app.gateway.schema_validator import validate_tool_schema
 from app.tools.controlled_tools import execute_tool
 
 
 class SessionTracker:
-    """Tracks state and enforce limits for an agent execution session."""
+    """Tracks state and enforce limits for an agent execution session with thread safety."""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
@@ -40,6 +42,7 @@ class SessionTracker:
         self.last_action_at = self.created_at
         self.is_terminated = False
         self.termination_reason: Optional[str] = None
+        self.lock = threading.Lock()
 
 
 class SecurityGateway:
@@ -59,27 +62,81 @@ class SecurityGateway:
         self.max_consecutive_denials = max_consecutive_denials
         self.max_session_duration_seconds = max_session_duration_seconds
         self.sessions: Dict[str, SessionTracker] = {}
-        self.allowed_agent_types = {"mock", "groq", "autonomous_mock", "tavily_agent", "hybrid"}
+        self.allowed_agent_types = {
+            "mock",
+            "groq",
+            "autonomous_mock",
+            "tavily_agent",
+            "hybrid",
+            "guest",
+            "catalog_agent",
+            "readonly_agent",
+            "admin",
+        }
+        self.trusted_identity_roles = {
+            "admin": "admin_agent",
+            "mock": "standard_agent",
+            "autonomous_mock": "standard_agent",
+            "groq": "standard_agent",
+            "hybrid": "standard_agent",
+            "tavily_agent": "readonly_agent",
+            "readonly_agent": "readonly_agent",
+            "catalog_agent": "catalog_agent",
+            "guest": "guest",
+        }
+        self.admin_auth_token = "tg_internal_admin_token_sec_val_2026"
+        self._lock = threading.RLock()
 
     def set_policy_set(self, policy_set) -> None:
-        self.policy_engine.set_policy_set(policy_set)
+        with self._lock:
+            self.policy_engine.set_policy_set(policy_set)
 
     def set_emergency_stop(self, stopped: bool) -> None:
-        """Emergency Stop / Pause kill-switch toggle."""
-        self.emergency_stopped = stopped
+        """Emergency Stop / Pause kill-switch toggle (Thread-safe atomic update)."""
+        with self._lock:
+            self.emergency_stopped = stopped
 
     def is_emergency_stopped(self) -> bool:
-        return self.emergency_stopped
+        with self._lock:
+            return self.emergency_stopped
 
     def get_or_create_session(self, session_id: Optional[str]) -> SessionTracker:
-        sid = session_id or "default_session"
-        if sid not in self.sessions:
-            self.sessions[sid] = SessionTracker(sid)
-        return self.sessions[sid]
+        with self._lock:
+            sid = session_id or "default_session"
+            if sid not in self.sessions:
+                self.sessions[sid] = SessionTracker(sid)
+            return self.sessions[sid]
 
     def reset_session(self, session_id: str) -> None:
-        if session_id in self.sessions:
-            del self.sessions[session_id]
+        with self._lock:
+            if session_id in self.sessions:
+                del self.sessions[session_id]
+
+    def evaluate_tool_call(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        agent_role: str = "standard_agent",
+        agent_type: str = "mock",
+        session_id: Optional[str] = None,
+        user_prompt: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> GatewayDecision:
+        """
+        Direct programmatic interface for developers to evaluate a tool call.
+        Constructs an authorized ToolInvocationRequest and returns a GatewayDecision.
+        """
+        request = ToolInvocationRequest(
+            tool_name=tool_name,
+            arguments=arguments,
+            agent_role=agent_role,
+            agent_type=agent_type,
+            session_id=session_id,
+            user_prompt=user_prompt,
+            context=context or {},
+        )
+        decision, _, _ = self.invoke(request)
+        return decision
 
     def invoke(
         self,
@@ -111,7 +168,7 @@ class SecurityGateway:
                 request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
             )
 
-        # 1. Agent Identity Validation
+        # 1. Agent Identity & Role Capability Scoping
         if request.agent_type not in self.allowed_agent_types:
             decision = GatewayDecision(
                 allowed=False,
@@ -120,6 +177,106 @@ class SecurityGateway:
                 rule_id="AGENT_IDENTITY_INVALID",
                 reason=f"Unauthorized agent identity: '{request.agent_type}' is not registered.",
                 violations=[f"Unregistered agent identity: {request.agent_type}"],
+            )
+            return self._build_denied_response(
+                request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+            )
+
+        # Validate registered tool name
+        valid_tools = {"read_file", "query_database", "send_email", "web_search"}
+        if request.tool_name not in valid_tools:
+            decision = GatewayDecision(
+                allowed=False,
+                decision=DecisionOutcome.DENY,
+                policy_id=self.policy_engine.policy_set.id,
+                rule_id="VALIDATE_TOOL_NAME",
+                reason=f"Tool '{request.tool_name}' is not a registered protected tool.",
+                violations=[f"Unregistered tool: '{request.tool_name}'"],
+            )
+            return self._build_denied_response(
+                request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+            )
+
+        # Admin identity verification: 'admin' identity requires valid server-side credentials
+        if request.agent_type == "admin":
+            provided_token = request.context.get("admin_token") if request.context else None
+            if not provided_token or provided_token != self.admin_auth_token:
+                decision = GatewayDecision(
+                    allowed=False,
+                    decision=DecisionOutcome.DENY,
+                    policy_id=self.policy_engine.policy_set.id,
+                    rule_id="IDENTITY_ROLE_SPOOF_DENIED",
+                    reason="Identity authorization violation: Agent claimed 'admin' identity without verified server-side authentication token.",
+                    violations=["Unauthenticated 'admin' identity spoofing attempt blocked"],
+                )
+                return self._build_denied_response(
+                    request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+                )
+
+        # Resolve server-side authorized role from identity registry
+        server_authorized_role = self.trusted_identity_roles.get(request.agent_type, "guest")
+        client_requested_role = getattr(request, "agent_role", None)
+
+        # Privilege hierarchy: guest (1) < catalog_agent (2) < readonly_agent (3) < standard_agent (4) < admin_agent (5)
+        role_hierarchy = {
+            "guest": 1,
+            "catalog_agent": 2,
+            "readonly_agent": 3,
+            "standard_agent": 4,
+            "admin_agent": 5,
+        }
+        server_level = role_hierarchy.get(server_authorized_role, 1)
+        client_level = role_hierarchy.get(client_requested_role, server_level) if client_requested_role else server_level
+
+        # Detect and deny client-side privilege escalation / identity spoofing
+        if client_level > server_level:
+            decision = GatewayDecision(
+                allowed=False,
+                decision=DecisionOutcome.DENY,
+                policy_id=self.policy_engine.policy_set.id,
+                rule_id="IDENTITY_ROLE_SPOOF_DENIED",
+                reason=f"Identity authorization violation: Agent identity '{request.agent_type}' is authorized for role '{server_authorized_role}' (level {server_level}), but attempted unverified elevation to '{client_requested_role}' (level {client_level}).",
+                violations=[f"Unverified role elevation attempt from '{server_authorized_role}' to '{client_requested_role}'"],
+            )
+            return self._build_denied_response(
+                request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+            )
+
+        # Effective role is bounded by server-side authorization (privilege dropping permitted, elevation denied)
+        effective_role = client_requested_role if (client_requested_role and client_level <= server_level) else server_authorized_role
+
+        # Scoped capability check based on effective role
+        role_capabilities = {
+            "admin_agent": {"read_file", "query_database", "send_email", "web_search"},
+            "standard_agent": {"read_file", "query_database", "send_email", "web_search"},
+            "readonly_agent": {"read_file", "query_database", "web_search"},
+            "catalog_agent": {"query_database"},
+            "guest": {"query_database"},
+        }
+        allowed_tools = role_capabilities.get(effective_role, {"query_database"})
+        if request.tool_name not in allowed_tools:
+            decision = GatewayDecision(
+                allowed=False,
+                decision=DecisionOutcome.DENY,
+                policy_id=self.policy_engine.policy_set.id,
+                rule_id="ROLE_SCOPE_DENIED",
+                reason=f"Role capability violation: Role '{effective_role}' is not authorized to invoke tool '{request.tool_name}'. Permitted tools: {sorted(list(allowed_tools))}",
+                violations=[f"Tool '{request.tool_name}' exceeds role '{effective_role}' capabilities"],
+            )
+            return self._build_denied_response(
+                request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+            )
+
+        # 2. Server-Side Schema & Argument Validation (Fail closed on malformed input)
+        is_schema_valid, schema_err = validate_tool_schema(request.tool_name, request.arguments)
+        if not is_schema_valid:
+            decision = GatewayDecision(
+                allowed=False,
+                decision=DecisionOutcome.DENY,
+                policy_id=self.policy_engine.policy_set.id,
+                rule_id="SCHEMA_VALIDATION_FAILED",
+                reason=f"Server-side schema validation error: {schema_err}",
+                violations=[schema_err or "Invalid argument schema"],
             )
             return self._build_denied_response(
                 request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
@@ -252,6 +409,7 @@ class SecurityGateway:
             test_run_id=test_run_id,
             test_case_id=test_case_id,
             agent_type=request.agent_type,
+            agent_role=effective_role,
             tool_name=request.tool_name,
             raw_arguments_hash=raw_hash,
             redacted_arguments=redacted_args,
@@ -262,6 +420,8 @@ class SecurityGateway:
             violations=decision.violations,
             attempted=True,
             executed=executed,
+            execution_success=execution_result.success if execution_result else False,
+            execution_error=execution_result.error if (execution_result and not execution_result.success) else None,
             data_exposure_detected=data_exposure_detected,
             exposure_details=exposure_details,
             execution_output_redacted=redacted_output,
@@ -288,12 +448,14 @@ class SecurityGateway:
             error=f"Blocked by Security Gateway: {decision.reason}",
             metadata={"rule_id": decision.rule_id, "policy_id": decision.policy_id},
         )
+        audit_role = self.trusted_identity_roles.get(request.agent_type, "guest")
         audit_event = AuditEvent(
             event_id=event_id,
             timestamp=timestamp,
             test_run_id=test_run_id,
             test_case_id=test_case_id,
             agent_type=request.agent_type,
+            agent_role=audit_role,
             tool_name=request.tool_name,
             raw_arguments_hash=raw_hash,
             redacted_arguments=redacted_args,
@@ -304,6 +466,8 @@ class SecurityGateway:
             violations=decision.violations,
             attempted=True,
             executed=False,
+            execution_success=False,
+            execution_error=decision.reason,
             data_exposure_detected=False,
             exposure_details=["Blocked prior to execution by gateway limit/kill-switch"],
             execution_output_redacted=None,

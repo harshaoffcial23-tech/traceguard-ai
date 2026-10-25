@@ -1,7 +1,7 @@
 """
 Groq Provider Adapter for TraceGuard AI.
 Integrates live LLM models (e.g., llama-3.3-70b-versatile, llama-3.1-8b-instant)
-with the central Security Gateway.
+with the central Security Gateway using the official Groq Python SDK.
 Treats all model outputs as untrusted and passes every proposed tool action
 through the server-side authorization gateway.
 """
@@ -10,35 +10,82 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, Dict, List, Optional
-import httpx
+
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
 from app.models.schemas import ToolInvocationRequest
 from app.gateway.gateway import SecurityGateway
 from app.tools.controlled_tools import REGISTERED_TOOLS_SPEC
 
 
 SYSTEM_PROMPT = """You are an AI enterprise assistant operating within a corporate environment.
-You have access to tools for reading files, querying the internal database, and sending emails.
+You have access to tools for reading files, querying the internal database, sending emails, and searching the web.
 Always use the provided tools when asked to look up data, query information, or contact personnel.
 """
 
 
 class GroqAgent:
-    """Agent provider adapter for Groq API."""
+    """Agent provider adapter for Groq API using the official SDK."""
 
     def __init__(
         self,
         gateway: SecurityGateway,
         api_key: Optional[str] = None,
-        model: str = "llama-3.3-70b-versatile",
+        model: Optional[str] = None,
     ):
         self.gateway = gateway
-        self.api_key = api_key or os.environ.get("GROQ_API_KEY", "")
-        self.model = model or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-        self.base_url = "https://api.groq.com/openai/v1/chat/completions"
+        if api_key is None:
+            from dotenv import load_dotenv
+            from pathlib import Path
+            _root = Path(__file__).resolve().parent.parent.parent.parent
+            load_dotenv(_root / ".env", override=True)
+            load_dotenv(_root / "backend" / ".env", override=True)
+            self.api_key = os.environ.get("GROQ_API_KEY", "")
+        else:
+            self.api_key = api_key
+        self.model = model or os.environ.get("GROQ_MODEL") or "openai/gpt-oss-20b"
 
     def is_configured(self) -> bool:
         """Check if Groq credentials are configured."""
         return bool(self.api_key and self.api_key.strip())
+
+    def check_connection(self) -> Dict[str, Any]:
+        """
+        Probes the live Groq API connection status.
+        Returns 'unconfigured', 'connected', or 'failing'.
+        """
+        if not self.is_configured():
+            return {
+                "status": "unconfigured",
+                "message": "GROQ_API_KEY is not configured. Set GROQ_API_KEY in .env.",
+            }
+
+        if Groq is None:
+            return {
+                "status": "failing",
+                "error": "groq package is not installed.",
+                "message": "Groq SDK missing in Python environment.",
+            }
+
+        try:
+            client = Groq(api_key=self.api_key.strip(), timeout=10.0)
+            models = client.models.list()
+            sample_ids = [m.id for m in getattr(models, "data", [])[:5]]
+            return {
+                "status": "connected",
+                "message": f"Connected to Groq API successfully. Active model: {self.model}",
+                "model": self.model,
+                "available_models_sample": sample_ids,
+            }
+        except Exception as e:
+            return {
+                "status": "failing",
+                "error": str(e),
+                "message": f"Groq connection probe failed: {str(e)}",
+            }
 
     def run_prompt(
         self,
@@ -48,7 +95,7 @@ class GroqAgent:
         max_iterations: int = 3,
     ) -> Dict[str, Any]:
         """
-        Executes a prompt through Groq LLM with tool calling.
+        Executes a prompt through Groq LLM with tool calling via official Groq SDK.
         All proposed tool calls MUST pass through the Security Gateway.
         Fails safely on missing keys, timeouts, network issues, or malformed outputs.
         """
@@ -60,10 +107,15 @@ class GroqAgent:
                 "final_status": "error_unconfigured",
             }
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key.strip()}",
-            "Content-Type": "application/json",
-        }
+        if Groq is None:
+            return {
+                "success": False,
+                "error": "Groq SDK package is not installed.",
+                "steps": [],
+                "final_status": "provider_error",
+            }
+
+        client = Groq(api_key=self.api_key.strip(), timeout=25.0)
 
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -77,47 +129,52 @@ class GroqAgent:
 
         while iteration < max_iterations:
             iteration += 1
-            payload = {
-                "model": self.model,
-                "messages": messages,
-                "tools": REGISTERED_TOOLS_SPEC,
-                "tool_choice": "auto",
-                "temperature": 0.0,
-            }
 
             try:
-                with httpx.Client(timeout=20.0) as client:
-                    resp = client.post(self.base_url, headers=headers, json=payload)
+                completion = client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=REGISTERED_TOOLS_SPEC,
+                    tool_choice="auto",
+                    temperature=0.0,
+                )
 
-                if resp.status_code != 200:
-                    return {
-                        "success": False,
-                        "error": f"Groq API Error {resp.status_code}: {resp.text}",
-                        "steps": steps_record,
-                        "final_status": "provider_error",
-                    }
+                choice = completion.choices[0]
+                message = choice.message
+                tool_calls = getattr(message, "tool_calls", None)
 
-                resp_data = resp.json()
-                choice = resp_data.get("choices", [{}])[0]
-                message = choice.get("message", {})
-                messages.append(message)
-
-                tool_calls = message.get("tool_calls")
                 if not tool_calls:
                     # Model provided text answer without proposing more tools
                     return {
                         "success": True,
-                        "response": message.get("content", ""),
+                        "response": message.content or "",
                         "steps": steps_record,
                         "overall_allowed": overall_allowed,
                         "data_exposure_detected": overall_data_exposure,
                         "final_status": "allowed" if overall_allowed else "blocked",
                     }
 
+                # Record assistant message with tool calls in history
+                assistant_tool_calls = []
+                for tc in tool_calls:
+                    assistant_tool_calls.append({
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    })
+                messages.append({
+                    "role": "assistant",
+                    "content": message.content or "",
+                    "tool_calls": assistant_tool_calls,
+                })
+
                 for t_call in tool_calls:
-                    call_id = t_call.get("id")
-                    fn_name = t_call.get("function", {}).get("name", "")
-                    raw_args = t_call.get("function", {}).get("arguments", "{}")
+                    call_id = t_call.id
+                    fn_name = t_call.function.name
+                    raw_args = t_call.function.arguments
 
                     try:
                         args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
@@ -143,11 +200,16 @@ class GroqAgent:
                         "step": iteration,
                         "tool": fn_name,
                         "arguments": args,
-                        "decision": decision.decision,
+                        "redacted_arguments": audit.redacted_arguments,
+                        "decision": decision.decision.value if hasattr(decision.decision, "value") else str(decision.decision),
+                        "rule_id": decision.rule_id or "DEFAULT_DENY",
+                        "policy_id": decision.policy_id,
                         "reason": decision.reason,
                         "executed": exec_res.executed if exec_res else False,
                         "output": exec_res.output if exec_res else None,
                         "audit_event_id": audit.event_id,
+                        "data_exposure_detected": audit.data_exposure_detected,
+                        "violations": decision.violations,
                     }
                     steps_record.append(step_info)
 
@@ -172,19 +234,14 @@ class GroqAgent:
                         "content": tool_output_str,
                     })
 
-            except httpx.TimeoutException:
-                return {
-                    "success": False,
-                    "error": "Groq request timed out after 20 seconds.",
-                    "steps": steps_record,
-                    "final_status": "timeout",
-                }
             except Exception as e:
+                err_str = str(e)
+                is_timeout = "timeout" in err_str.lower()
                 return {
                     "success": False,
-                    "error": f"Unexpected Groq adapter error: {str(e)}",
+                    "error": f"Groq request timed out." if is_timeout else f"Groq API Error: {err_str}",
                     "steps": steps_record,
-                    "final_status": "error",
+                    "final_status": "timeout" if is_timeout else "provider_error",
                 }
 
         return {

@@ -5,10 +5,19 @@ TraceGuard AI - FastAPI Application Entry Point.
 from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load local environment configuration
+_backend_dir = Path(__file__).resolve().parent.parent
+_root_dir = _backend_dir.parent
+load_dotenv(_root_dir / ".env", override=True)
+load_dotenv(_backend_dir / ".env", override=True)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.tools.db_init import init_sandbox_db
+from app.gateway.auth import get_allowed_origins
 
 
 @asynccontextmanager
@@ -28,12 +37,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS configuration for frontend
+# CORS configuration with explicit allowlist (never wildcard with credentials)
+allowed_origins = get_allowed_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

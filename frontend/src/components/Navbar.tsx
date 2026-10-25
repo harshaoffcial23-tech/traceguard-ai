@@ -1,24 +1,31 @@
 import React from 'react';
 import {
-  Shield,
   ShieldCheck,
   ShieldAlert,
-  Cpu,
+  Play,
+  Bot,
+  Activity,
   Layers,
-  Terminal,
-  FileCheck2,
-  GitCompare,
-  ScrollText,
-  AlertTriangle,
   RotateCcw,
+  Home,
+  LogIn,
+  LogOut,
+  User as UserIcon,
+  Shield,
+  ArrowLeft,
 } from 'lucide-react';
-import { SystemHealth } from '../types';
+import { SystemHealth, User } from '../types';
 
 interface NavbarProps {
   health: SystemHealth | null;
   activeTab: string;
   setActiveTab: (tab: string) => void;
   onRefreshHealth: () => void;
+  isEmergencyStopped?: boolean;
+  currentUser: User | null;
+  onOpenLogin: () => void;
+  onOpenRegister: () => void;
+  onLogout: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -26,100 +33,192 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
   onRefreshHealth,
+  isEmergencyStopped = false,
+  currentUser,
+  onOpenLogin,
+  onOpenRegister,
+  onLogout,
 }) => {
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: Shield },
-    { id: 'suites', label: 'Test Suites', icon: FileCheck2 },
-    { id: 'run_details', label: 'Run Details', icon: Terminal },
-    { id: 'playground', label: 'Live Playground', icon: Cpu },
-    { id: 'policies', label: 'Policy Engine', icon: Layers },
-    { id: 'audit', label: 'Audit Timeline', icon: ScrollText },
-    { id: 'regression', label: 'Regression Diff', icon: GitCompare },
-    { id: 'findings', label: 'OWASP Findings', icon: AlertTriangle },
+  const primaryTabs = [
+    { id: 'home', label: 'Overview', icon: Home },
+    { id: 'playground', label: 'Security Playground', icon: Play },
+    { id: 'agent_demo', label: 'Agent Demo', icon: Bot },
+    { id: 'activity', label: 'Activity & Audit', icon: Activity },
   ];
 
   return (
-    <header className="border-b border-slate-800 bg-[#0b101d]/90 backdrop-blur sticky top-0 z-50 px-6 py-3">
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
-        {/* Brand */}
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-indigo-500/20 to-emerald-500/20 border border-emerald-500/30 rounded-lg flex items-center justify-center text-emerald-400">
-            <ShieldCheck className="w-6 h-6 text-emerald-400" />
+    <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-black/75 border-b border-white/[0.08] px-4 sm:px-6 py-3.5">
+      <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* Brand & Identity */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab('landing')}
+              title="Return to Public Landing Page"
+              className="flex items-center gap-2.5 text-left group cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40 rounded-lg p-1"
+            >
+              <div className="w-8 h-8 rounded-lg bg-white/[0.05] border border-white/15 flex items-center justify-center text-white group-hover:border-white/30 group-hover:bg-white/[0.1] transition shadow-xs">
+                <Shield className="w-4 h-4 text-[#C7F36B]" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-white tracking-tight group-hover:text-white/90 transition">
+                    TraceGuard AI
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.05] text-[#8E969E] border border-white/10">
+                    Console
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#8E969E] -mt-0.5">Zero-Trust Agent Gateway</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('landing')}
+              className="hidden lg:flex items-center gap-1 text-[11px] font-mono text-[#8E969E] hover:text-white px-2 py-1 rounded bg-white/[0.03] border border-white/5 transition cursor-pointer"
+              title="Back to Landing Page"
+            >
+              <ArrowLeft className="w-3 h-3" />
+              <span>Landing</span>
+            </button>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-lg text-slate-100 tracking-tight">TraceGuard AI</span>
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                v1.0.0
-              </span>
-            </div>
-            <p className="text-xs text-slate-400">Tool-Use Security Gateway & Attack Benchmark</p>
+
+          {/* Mobile Right Controls */}
+          <div className="flex md:hidden items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isEmergencyStopped ? 'bg-[#EF4444] animate-ping' : 'bg-[#C7F36B]'
+              }`}
+            ></span>
+            {currentUser ? (
+              <button
+                type="button"
+                onClick={onLogout}
+                title="Log out"
+                className="p-1.5 text-[#8E969E] hover:text-[#EF4444] rounded bg-white/[0.05] border border-white/10"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onOpenLogin}
+                className="px-3 py-1 text-xs font-semibold rounded-full bg-white text-black"
+              >
+                Log In
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Status Indicators */}
-        <div className="flex items-center gap-3 text-xs">
-          {health ? (
-            <>
-              {/* Backend status */}
-              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-md text-slate-300">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>Gateway: <strong className="text-emerald-400">Online</strong></span>
-              </div>
+        {/* 4 Primary Navigation Destinations + Advanced Pill */}
+        <nav className="flex flex-wrap items-center gap-1.5 p-1 rounded-full liquid-pill" aria-label="Workspace Navigation">
+          {primaryTabs.map((t) => {
+            const Icon = t.icon;
+            const isActive = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setActiveTab(t.id)}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                  isActive
+                    ? 'bg-white/15 text-white shadow-xs border border-white/20'
+                    : 'text-[#8E969E] hover:text-white hover:bg-white/[0.05]'
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#C7F36B]' : 'text-[#8E969E]'}`} />
+                <span>{t.label}</span>
+              </button>
+            );
+          })}
 
-              {/* Active policy */}
-              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-md text-slate-300">
-                <Shield className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Policy: <strong className="text-indigo-300">{health.active_policy_name || 'Strict Zero-Trust'}</strong></span>
-              </div>
-
-              {/* Groq Adapter status */}
-              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-md text-slate-300">
-                <Cpu className="w-3.5 h-3.5 text-slate-400" />
-                <span>Groq: {health.groq_configured ? (
-                  <strong className="text-emerald-400">Ready</strong>
-                ) : (
-                  <strong className="text-amber-400" title="Offline mock mode active">Mock Lab</strong>
-                )}</span>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/30 px-2.5 py-1 rounded-md text-rose-400">
-              <ShieldAlert className="w-3.5 h-3.5" />
-              <span>Connecting to Gateway...</span>
-            </div>
-          )}
+          {/* Advanced Section Tab */}
+          <div className="h-4 w-[1px] bg-white/10 mx-1 hidden sm:block"></div>
 
           <button
+            type="button"
+            onClick={() => setActiveTab('advanced')}
+            className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'advanced'
+                ? 'bg-white/15 text-white shadow-xs border border-white/20'
+                : 'text-[#8E969E] hover:text-white hover:bg-white/[0.05]'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-purple-400" />
+            <span>Benchmarks</span>
+          </button>
+        </nav>
+
+        {/* Right Status Indicator, User Profile & Auth Controls */}
+        <div className="hidden md:flex items-center gap-3 text-xs">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/10">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isEmergencyStopped ? 'bg-[#EF4444] animate-ping' : 'bg-[#C7F36B]'
+              }`}
+            ></span>
+            <span className="text-[11px] font-mono text-[#8E969E]">
+              Gateway:{' '}
+              <strong className={isEmergencyStopped ? 'text-[#EF4444]' : 'text-[#C7F36B]'}>
+                {isEmergencyStopped ? 'STOPPED' : 'Active'}
+              </strong>
+            </span>
+          </div>
+
+          <button
+            type="button"
             onClick={onRefreshHealth}
-            title="Refresh System Status"
-            className="p-1.5 text-slate-400 hover:text-slate-200 bg-slate-900 border border-slate-800 rounded-md hover:border-slate-700 transition"
+            title="Refresh System Health Status"
+            className="p-2 text-[#8E969E] hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 rounded-full transition cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
-        </div>
-      </div>
 
-      {/* Nav Tabs */}
-      <div className="max-w-7xl mx-auto mt-3 flex items-center gap-1 overflow-x-auto pb-1 scrollbar-thin">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-all ${
-                isActive
-                  ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-              }`}
-            >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-slate-400'}`} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+          {/* User Account Controls */}
+          <div className="h-4 w-[1px] bg-white/10"></div>
+
+          {currentUser ? (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/10">
+                <UserIcon className="w-3.5 h-3.5 text-[#C7F36B]" />
+                <span className="text-white font-medium max-w-[120px] truncate">
+                  {currentUser.full_name}
+                </span>
+                <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-white/10 text-[#8E969E] border border-white/10">
+                  {currentUser.role}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onLogout}
+                title="Log out of gateway"
+                className="p-2 text-[#8E969E] hover:text-[#EF4444] bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 rounded-full transition cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onOpenLogin}
+                className="glass-button-secondary px-3.5 py-1.5 rounded-full text-xs font-medium text-white/80 hover:text-white transition cursor-pointer"
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                onClick={onOpenRegister}
+                className="glass-button-primary px-4 py-1.5 rounded-full text-xs font-semibold text-white transition shadow-xs cursor-pointer"
+              >
+                Sign Up
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );

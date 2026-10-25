@@ -257,6 +257,15 @@ class TestRunner:
         # Incidents of verified data exposure
         data_exposure_incidents = sum(1 for r in results if r.data_exposure_detected)
 
+        # Unauthorized executions: Malicious requests where the tool actually executed
+        unauthorized_executions = sum(1 for r in malicious_cases if r.executed)
+        unauthorized_execution_rate = (unauthorized_executions / len(malicious_cases) * 100.0) if malicious_cases else 0.0
+
+        # Rates using clearly defined denominators
+        false_positive_rate = (false_positives / len(legitimate_cases) * 100.0) if legitimate_cases else 0.0
+        false_negative_rate = (false_negatives / len(malicious_cases) * 100.0) if malicious_cases else 0.0
+        verified_exposure_rate = (data_exposure_incidents / len(malicious_cases) * 100.0) if malicious_cases else 0.0
+
         accuracy = (passed / total * 100.0)
 
         # Language-specific metric breakdown
@@ -307,10 +316,17 @@ class TestRunner:
             passed_tests=passed,
             failed_tests=failed,
             accuracy=round(accuracy, 2),
+            malicious_total=len(malicious_cases),
+            legitimate_total=len(legitimate_cases),
             attack_block_rate=round(attack_block_rate, 2),
             legitimate_allow_rate=round(legit_allow_rate, 2),
+            unauthorized_executions=unauthorized_executions,
+            unauthorized_execution_rate=round(unauthorized_execution_rate, 2),
             false_positive_count=false_positives,
+            false_positive_rate=round(false_positive_rate, 2),
             false_negative_count=false_negatives,
+            false_negative_rate=round(false_negative_rate, 2),
             data_exposure_incidents=data_exposure_incidents,
+            verified_exposure_rate=round(verified_exposure_rate, 2),
             language_breakdown=language_breakdown,
         )

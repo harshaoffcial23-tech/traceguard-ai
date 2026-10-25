@@ -6,9 +6,10 @@ Stores policy configurations, test runs, and structured audit events.
 from __future__ import annotations
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from app.models.schemas import AuditEvent, PolicySet, TestRun, TestSuite, TestCase
+from app.models.schemas import AuditEvent, PolicySet, TestRun, TestSuite, TestCase, User
 
 
 DB_FILE = (Path(__file__).resolve().parent.parent.parent / "data" / "traceguard.db").resolve()
@@ -23,13 +24,18 @@ class Storage:
         self._init_tables()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_tables(self) -> None:
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # Enable Write-Ahead Logging (WAL) and busy timeout for safe concurrent writes
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
 
             # 1. Policies table
             cursor.execute(
@@ -71,6 +77,7 @@ class Storage:
                     test_run_id TEXT,
                     test_case_id TEXT,
                     agent_type TEXT NOT NULL,
+                    agent_role TEXT DEFAULT 'standard_agent',
                     tool_name TEXT NOT NULL,
                     raw_arguments_hash TEXT NOT NULL,
                     redacted_arguments_json TEXT NOT NULL,
@@ -81,6 +88,8 @@ class Storage:
                     violations_json TEXT NOT NULL,
                     attempted INTEGER NOT NULL DEFAULT 1,
                     executed INTEGER NOT NULL DEFAULT 0,
+                    execution_success INTEGER,
+                    execution_error TEXT,
                     data_exposure_detected INTEGER NOT NULL DEFAULT 0,
                     exposure_details_json TEXT NOT NULL,
                     execution_output_redacted_json TEXT,
@@ -88,6 +97,48 @@ class Storage:
                 )
                 """
             )
+
+            # Migration for existing DB tables
+            cursor.execute("PRAGMA table_info(audit_events)")
+            cols = {row["name"] for row in cursor.fetchall()}
+            if "agent_role" not in cols:
+                cursor.execute("ALTER TABLE audit_events ADD COLUMN agent_role TEXT DEFAULT 'standard_agent'")
+            if "execution_success" not in cols:
+                cursor.execute("ALTER TABLE audit_events ADD COLUMN execution_success INTEGER")
+            if "execution_error" not in cols:
+                cursor.execute("ALTER TABLE audit_events ADD COLUMN execution_error TEXT")
+
+            # 4. Users table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    full_name TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'operator',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+
+            # 5. Sessions table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    is_revoked INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
+
             conn.commit()
 
     # Policy operations
@@ -220,11 +271,11 @@ class Storage:
             cursor.execute(
                 """
                 INSERT INTO audit_events (
-                    event_id, timestamp, test_run_id, test_case_id, agent_type, tool_name,
+                    event_id, timestamp, test_run_id, test_case_id, agent_type, agent_role, tool_name,
                     raw_arguments_hash, redacted_arguments_json, decision, policy_id, rule_id,
-                    reason, violations_json, attempted, executed, data_exposure_detected,
-                    exposure_details_json, execution_output_redacted_json, context_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reason, violations_json, attempted, executed, execution_success, execution_error,
+                    data_exposure_detected, exposure_details_json, execution_output_redacted_json, context_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(event_id) DO NOTHING
                 """,
                 (
@@ -233,6 +284,7 @@ class Storage:
                     event.test_run_id,
                     event.test_case_id,
                     event.agent_type,
+                    getattr(event, "agent_role", "standard_agent"),
                     event.tool_name,
                     event.raw_arguments_hash,
                     json.dumps(event.redacted_arguments),
@@ -243,6 +295,8 @@ class Storage:
                     json.dumps(event.violations),
                     1 if event.attempted else 0,
                     1 if event.executed else 0,
+                    1 if event.execution_success else (0 if event.execution_success is False else None),
+                    event.execution_error,
                     1 if event.data_exposure_detected else 0,
                     json.dumps(event.exposure_details),
                     json.dumps(event.execution_output_redacted) if event.execution_output_redacted is not None else None,
@@ -280,6 +334,7 @@ class Storage:
             rows = cursor.fetchall()
             events = []
             for row in rows:
+                row_keys = row.keys() if hasattr(row, "keys") else []
                 events.append(
                     AuditEvent(
                         event_id=row["event_id"],
@@ -287,6 +342,7 @@ class Storage:
                         test_run_id=row["test_run_id"],
                         test_case_id=row["test_case_id"],
                         agent_type=row["agent_type"],
+                        agent_role=row["agent_role"] if "agent_role" in row_keys else "standard_agent",
                         tool_name=row["tool_name"],
                         raw_arguments_hash=row["raw_arguments_hash"],
                         redacted_arguments=json.loads(row["redacted_arguments_json"]),
@@ -297,6 +353,8 @@ class Storage:
                         violations=json.loads(row["violations_json"]),
                         attempted=bool(row["attempted"]),
                         executed=bool(row["executed"]),
+                        execution_success=bool(row["execution_success"]) if ("execution_success" in row_keys and row["execution_success"] is not None) else None,
+                        execution_error=row["execution_error"] if "execution_error" in row_keys else None,
                         data_exposure_detected=bool(row["data_exposure_detected"]),
                         exposure_details=json.loads(row["exposure_details_json"]),
                         execution_output_redacted=json.loads(row["execution_output_redacted_json"])
@@ -306,3 +364,114 @@ class Storage:
                     )
                 )
             return events
+
+    # User & Session Management
+    def create_user(
+        self,
+        user_id: str,
+        email: str,
+        password_hash: str,
+        salt: str,
+        full_name: str,
+        role: str = "operator",
+        created_at: Optional[str] = None,
+    ) -> User:
+        now = created_at or datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO users (id, email, password_hash, salt, full_name, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, email.strip().lower(), password_hash, salt, full_name.strip(), role, now),
+            )
+            conn.commit()
+        return User(
+            id=user_id,
+            email=email.strip().lower(),
+            full_name=full_name.strip(),
+            role=role,
+            created_at=now,
+        )
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email.strip().lower(),))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, email, full_name, role, created_at FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                return User(
+                    id=row["id"],
+                    email=row["email"],
+                    full_name=row["full_name"],
+                    role=row["role"],
+                    created_at=row["created_at"],
+                )
+            return None
+
+    def update_user_role(self, user_id: str, new_role: str) -> Optional[User]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
+            conn.commit()
+        return self.get_user_by_id(user_id)
+
+    def update_user_password(self, user_id: str, password_hash: str, salt: str) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+                (password_hash, salt, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def create_session(
+        self,
+        token_hash: str,
+        user_id: str,
+        expires_at: str,
+        created_at: Optional[str] = None,
+    ) -> None:
+        now = created_at or datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO sessions (token_hash, user_id, created_at, expires_at, is_revoked)
+                VALUES (?, ?, ?, ?, 0)
+                """,
+                (token_hash, user_id, now, expires_at),
+            )
+            conn.commit()
+
+    def get_session(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM sessions WHERE token_hash = ?", (token_hash,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def revoke_session(self, token_hash: str) -> None:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE sessions SET is_revoked = 1 WHERE token_hash = ?", (token_hash,))
+            conn.commit()
+
+    def revoke_all_user_sessions(self, user_id: str) -> None:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE sessions SET is_revoked = 1 WHERE user_id = ?", (user_id,))
+            conn.commit()

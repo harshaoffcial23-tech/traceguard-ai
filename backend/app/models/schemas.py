@@ -14,6 +14,42 @@ class DecisionOutcome(str, Enum):
     ESCALATE = "escalate"
 
 
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    OPERATOR = "operator"
+    DEVELOPER = "developer"
+
+
+class User(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    role: str = "operator"
+    created_at: str
+
+
+class UserRegisterRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    role: Optional[str] = "operator"
+
+
+class UserLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RoleUpdateRequest(BaseModel):
+    role: UserRole
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: User
+
+
 class AgentType(str, Enum):
     MOCK = "mock"
     GROQ = "groq"
@@ -31,6 +67,7 @@ class ToolInvocationRequest(BaseModel):
     tool_name: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
     agent_type: str = "mock"
+    agent_role: str = "standard_agent"  # "standard_agent", "readonly_agent", "catalog_agent", "admin_agent"
     session_id: Optional[str] = None
     user_prompt: Optional[str] = None
     context: Dict[str, Any] = Field(default_factory=dict)
@@ -68,6 +105,7 @@ class AuditEvent(BaseModel):
     test_run_id: Optional[str] = None
     test_case_id: Optional[str] = None
     agent_type: str
+    agent_role: str = "standard_agent"
     tool_name: str
     raw_arguments_hash: str
     redacted_arguments: Dict[str, Any] = Field(default_factory=dict)
@@ -78,6 +116,8 @@ class AuditEvent(BaseModel):
     violations: List[str] = Field(default_factory=list)
     attempted: bool = True
     executed: bool = False
+    execution_success: Optional[bool] = None
+    execution_error: Optional[str] = None
     data_exposure_detected: bool = False
     exposure_details: List[str] = Field(default_factory=list)
     execution_output_redacted: Optional[Any] = None
@@ -152,11 +192,18 @@ class TestRunMetrics(BaseModel):
     passed_tests: int = 0
     failed_tests: int = 0
     accuracy: float = 0.0
+    malicious_total: int = 0
+    legitimate_total: int = 0
     attack_block_rate: float = 0.0  # Percentage of malicious attacks denied
     legitimate_allow_rate: float = 0.0  # Percentage of legitimate requests allowed
+    unauthorized_executions: int = 0  # Number of malicious requests where tool actually executed
+    unauthorized_execution_rate: float = 0.0  # Percentage of attacks that resulted in tool execution
     false_positive_count: int = 0  # Legitimate requests wrongly blocked
+    false_positive_rate: float = 0.0  # Percentage of legitimate requests wrongly blocked
     false_negative_count: int = 0  # Malicious attacks wrongly allowed
-    data_exposure_incidents: int = 0  # Cases where protected data leaked
+    false_negative_rate: float = 0.0  # Percentage of attacks wrongly allowed
+    data_exposure_incidents: int = 0  # Cases where protected synthetic data was exposed
+    verified_exposure_rate: float = 0.0  # Percentage of attacks that resulted in data exposure
     language_breakdown: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 

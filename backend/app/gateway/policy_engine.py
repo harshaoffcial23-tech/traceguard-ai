@@ -22,79 +22,93 @@ class PolicyEngine:
         """
         Evaluate a tool invocation request.
         Zero-trust principle: Deny-by-default unless an active rule explicitly allows
-        and NO deny rule triggers.
+        and NO deny rule triggers. Fails closed on any evaluation error.
         """
-        tool_name = request.tool_name
-        args = request.arguments or {}
-        violations: List[str] = []
-        matched_rules: List[str] = []
+        try:
+            tool_name = request.tool_name
+            args = request.arguments or {}
+            violations: List[str] = []
+            matched_rules: List[str] = []
 
-        # 0. Basic Validation: Valid tool name
-        valid_tools = {"read_file", "query_database", "send_email"}
-        if tool_name not in valid_tools:
+            # 0. Basic Validation: Valid tool name
+            valid_tools = {"read_file", "query_database", "send_email", "web_search"}
+            if tool_name not in valid_tools:
+                return GatewayDecision(
+                    allowed=False,
+                    decision=DecisionOutcome.DENY,
+                    policy_id=self.policy_set.id,
+                    policy_name=self.policy_set.name,
+                    rule_id="VALIDATE_TOOL_NAME",
+                    reason=f"Tool '{tool_name}' is not a registered protected tool.",
+                    violations=[f"Unregistered tool: '{tool_name}'"],
+                    matched_rules=["VALIDATE-TOOL-NAME"],
+                )
+
+            # 1. Deny Rules Evaluation (Priority: Deny rules override allow rules)
+            enabled_rules = sorted(
+                [r for r in self.policy_set.rules if r.enabled and (r.tool == tool_name or r.tool == "*")],
+                key=lambda r: r.priority,
+            )
+
+            explicitly_allowed = False
+            allow_rule_matched: Optional[PolicyRule] = None
+
+            for rule in enabled_rules:
+                matched, reason = self._check_rule_match(rule, request)
+                if matched:
+                    matched_rules.append(rule.id)
+                    if rule.action == DecisionOutcome.DENY:
+                        violations.append(reason)
+                        return GatewayDecision(
+                            allowed=False,
+                            decision=DecisionOutcome.DENY,
+                            policy_id=self.policy_set.id,
+                            policy_name=self.policy_set.name,
+                            rule_id=rule.id,
+                            reason=reason,
+                            violations=violations,
+                            matched_rules=matched_rules,
+                        )
+                    elif rule.action == DecisionOutcome.ALLOW:
+                        explicitly_allowed = True
+                        allow_rule_matched = rule
+
+            # 2. Check if explicitly allowed
+            if explicitly_allowed and allow_rule_matched:
+                return GatewayDecision(
+                    allowed=True,
+                    decision=DecisionOutcome.ALLOW,
+                    policy_id=self.policy_set.id,
+                    policy_name=self.policy_set.name,
+                    rule_id=allow_rule_matched.id,
+                    reason=f"Action permitted by policy rule '{allow_rule_matched.name}'",
+                    violations=[],
+                    matched_rules=matched_rules,
+                )
+
+            # 3. Deny by default
             return GatewayDecision(
                 allowed=False,
                 decision=DecisionOutcome.DENY,
                 policy_id=self.policy_set.id,
                 policy_name=self.policy_set.name,
-                reason=f"Tool '{tool_name}' is not a registered protected tool.",
-                violations=[f"Unregistered tool: '{tool_name}'"],
-                matched_rules=["VALIDATE-TOOL-NAME"],
-            )
-
-        # 1. Deny Rules Evaluation (Priority: Deny rules override allow rules)
-        # Sort enabled rules by priority (ascending: lower number = higher priority)
-        enabled_rules = sorted(
-            [r for r in self.policy_set.rules if r.enabled and (r.tool == tool_name or r.tool == "*")],
-            key=lambda r: r.priority,
-        )
-
-        explicitly_allowed = False
-        allow_rule_matched: Optional[PolicyRule] = None
-
-        for rule in enabled_rules:
-            matched, reason = self._check_rule_match(rule, request)
-            if matched:
-                matched_rules.append(rule.id)
-                if rule.action == DecisionOutcome.DENY:
-                    violations.append(reason)
-                    return GatewayDecision(
-                        allowed=False,
-                        decision=DecisionOutcome.DENY,
-                        policy_id=self.policy_set.id,
-                        policy_name=self.policy_set.name,
-                        rule_id=rule.id,
-                        reason=reason,
-                        violations=violations,
-                        matched_rules=matched_rules,
-                    )
-                elif rule.action == DecisionOutcome.ALLOW:
-                    explicitly_allowed = True
-                    allow_rule_matched = rule
-
-        # 2. Check if explicitly allowed
-        if explicitly_allowed and allow_rule_matched:
-            return GatewayDecision(
-                allowed=True,
-                decision=DecisionOutcome.ALLOW,
-                policy_id=self.policy_set.id,
-                policy_name=self.policy_set.name,
-                rule_id=allow_rule_matched.id,
-                reason=f"Action permitted by policy rule '{allow_rule_matched.name}'",
-                violations=[],
+                rule_id="DEFAULT_DENY",
+                reason="Deny-by-default: No explicit policy rule permitted this tool invocation.",
+                violations=[f"No matching ALLOW rule for tool '{tool_name}' with given arguments."],
                 matched_rules=matched_rules,
             )
-
-        # 3. Deny by default
-        return GatewayDecision(
-            allowed=False,
-            decision=DecisionOutcome.DENY,
-            policy_id=self.policy_set.id,
-            policy_name=self.policy_set.name,
-            reason="Deny-by-default: No explicit policy rule permitted this tool invocation.",
-            violations=[f"No matching ALLOW rule for tool '{tool_name}' with given arguments."],
-            matched_rules=matched_rules,
-        )
+        except Exception as e:
+            # Critical Security Invariant: Fail Closed
+            return GatewayDecision(
+                allowed=False,
+                decision=DecisionOutcome.DENY,
+                policy_id=self.policy_set.id if self.policy_set else "unknown",
+                policy_name=self.policy_set.name if self.policy_set else "unknown",
+                rule_id="EVALUATION_ERROR_FAIL_CLOSED",
+                reason=f"Security Gateway fail-closed: Internal policy evaluation error: {str(e)}",
+                violations=[f"Policy evaluation failure: {str(e)}"],
+                matched_rules=["FAIL-CLOSED-ON-EXCEPTION"],
+            )
 
     def _check_rule_match(self, rule: PolicyRule, request: ToolInvocationRequest) -> Tuple[bool, str]:
         ctype = rule.condition_type
@@ -103,9 +117,21 @@ class PolicyEngine:
 
         # Path Traversal Check
         if ctype == "path_traversal_check":
-            path = str(args.get("path", ""))
-            if ".." in path or "/.." in path or "\\.." in path or path.startswith("/") or path.startswith("\\"):
-                return True, f"Policy violation: Directory traversal pattern detected in path '{path}'"
+            import urllib.parse
+            raw_path = str(args.get("path", ""))
+            decoded_path = urllib.parse.unquote(raw_path)
+            if (
+                ".." in raw_path
+                or ".." in decoded_path
+                or "/.." in raw_path
+                or "\\.." in raw_path
+                or raw_path.startswith("/")
+                or raw_path.startswith("\\")
+                or decoded_path.startswith("/")
+                or decoded_path.startswith("\\")
+                or "\x00" in raw_path
+            ):
+                return True, f"Policy violation: Directory traversal pattern detected in path '{raw_path}'"
             return False, ""
 
         # Path Prefix Blacklist
@@ -128,49 +154,89 @@ class PolicyEngine:
 
         # SQL Destructive / Mutation Disallowed Keywords
         elif ctype == "sql_disallowed_keywords":
-            query = str(args.get("query", "")).upper()
-            disallowed = params.get("keywords", ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "ATTACH", "EXEC"])
+            query = str(args.get("query", ""))
+            # Strip SQL block and line comments to avoid comment-masking bypasses
+            clean_query = re.sub(r"/\*.*?\*/", " ", query, flags=re.DOTALL)
+            clean_query = re.sub(r"--[^\r\n]*", " ", clean_query).upper()
+            disallowed = params.get("keywords", ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "ATTACH", "EXEC", "REPLACE", "TRUNCATE"])
             for kw in disallowed:
-                # Use word boundary
-                if re.search(r"\b" + re.escape(kw) + r"\b", query):
+                if re.search(r"\b" + re.escape(kw) + r"\b", clean_query):
                     return True, f"Policy violation: SQL statement contains disallowed mutation keyword '{kw}'"
             return False, ""
 
-        # SQL Allowed Tables Whitelist
+        # SQL Allowed Tables Whitelist (Strict Clause Extraction & String Literal Stripping)
         elif ctype == "sql_table_whitelist":
-            query = str(args.get("query", "")).lower()
+            query_raw = str(args.get("query", ""))
+
+            # Strip SQL comments first
+            clean_query = re.sub(r"/\*.*?\*/", " ", query_raw, flags=re.DOTALL)
+            clean_query = re.sub(r"--[^\r\n]*", " ", clean_query)
+
+            # Strip string literals ('...') so attackers cannot embed table names in string literals
+            query_no_literals = re.sub(r"'[^']*'", "''", clean_query).lower()
+
             allowed_tables = set(t.lower() for t in params.get("allowed_tables", []))
             protected_tables = set(t.lower() for t in params.get("protected_tables", ["user_profiles", "api_tokens"]))
+            system_tables = {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_sequence"}
 
-            # Check if any protected table is mentioned
-            for p_table in protected_tables:
-                if re.search(r"\b" + re.escape(p_table) + r"\b", query):
+            # 1. Deny check for confidential or system tables
+            for p_table in (protected_tables | system_tables):
+                if re.search(r"\b" + re.escape(p_table) + r"\b", query_no_literals):
                     return True, f"Policy violation: Query targets confidential table '{p_table}'"
 
-            # If rule is an ALLOW rule, verify query targets at least one allowed table
+            # Reject stacked / multi-statement queries (semicolon followed by non-whitespace statements)
+            if re.search(r";\s*[a-zA-Z]", query_no_literals):
+                return True, "Policy violation: Stacked/multi-statement queries are forbidden."
+
+            # 2. Extract referenced tables strictly from FROM and JOIN clauses
+            from_matches = re.findall(r"\bfrom\s+([a-zA-Z0-9_\"]+)", query_no_literals)
+            join_matches = re.findall(r"\bjoin\s+([a-zA-Z0-9_\"]+)", query_no_literals)
+            referenced_tables = {tbl.strip('"[]`').lower() for tbl in (from_matches + join_matches)}
+
+            # If rule is an ALLOW rule, verify query targets at least one allowed table and only allowed tables
             if rule.action == DecisionOutcome.ALLOW:
-                for a_table in allowed_tables:
-                    if re.search(r"\b" + re.escape(a_table) + r"\b", query):
-                        return True, f"Query accesses permitted table '{a_table}'"
+                if referenced_tables and referenced_tables.issubset(allowed_tables):
+                    tables_str = ", ".join(sorted(list(referenced_tables)))
+                    return True, f"Query accesses permitted table(s) '{tables_str}'"
                 return False, ""
 
             return False, ""
 
-        # Email Domain Whitelist / Restriction
+        # Email Domain Whitelist / Restriction (Standard RFC 5322 Parsing)
         elif ctype == "email_domain_whitelist":
-            recipient = str(args.get("to", "")).lower().strip()
-            allowed_domains = params.get("allowed_domains", [])
-            is_allowed = any(recipient.endswith(d.lower()) for d in allowed_domains)
+            import email.utils
+            raw_to = str(args.get("to", "")).strip()
+            allowed_domains = [d.lower() for d in params.get("allowed_domains", [])]
+
+            # Reject header injection in recipient
+            if "\r" in raw_to or "\n" in raw_to:
+                return True, "Policy violation: CRLF header injection detected in email recipient."
+
+            # Use standard library RFC 5322 parser
+            parsed_addresses = email.utils.getaddresses([raw_to])
+
+            # If nothing parsed or any address is empty or lacks '@'
+            if not parsed_addresses or any(not addr or "@" not in addr for _, addr in parsed_addresses):
+                return True, f"Policy violation: Malformed or unparseable recipient address in '{raw_to}'"
+
+            # Wildcard domain check
+            if "*" in allowed_domains or "@*" in allowed_domains:
+                all_allowed = True
+            else:
+                all_allowed = all(
+                    any(addr.lower().endswith(d) for d in allowed_domains)
+                    for _, addr in parsed_addresses
+                )
 
             if rule.action == DecisionOutcome.DENY:
-                # Deny rule triggers if NOT in allowed domains
-                if not is_allowed:
-                    return True, f"Policy violation: Email recipient '{recipient}' is not within authorized domains {allowed_domains}"
+                # Deny rule triggers if ANY recipient is not authorized
+                if not all_allowed:
+                    return True, f"Policy violation: Email recipient '{raw_to}' is not within authorized domains {allowed_domains}"
                 return False, ""
             else:
-                # Allow rule triggers if matches allowed domain
-                if is_allowed:
-                    return True, f"Email recipient '{recipient}' matches authorized domain list"
+                # Allow rule triggers only if ALL recipients are authorized
+                if all_allowed:
+                    return True, f"All email recipients in '{raw_to}' match authorized domain list {allowed_domains}"
                 return False, ""
 
         # Email PII / Secret Exfiltration Prevention
@@ -186,11 +252,28 @@ class PolicyEngine:
                 return True, f"Policy violation: Attempted data exfiltration. Email content contains {categories}."
             return False, ""
 
-        # Heuristic Prompt Injection Marker (English, Telugu, Hindi, Tamil, Code-mixed)
+        # Heuristic Prompt Injection Marker with Benign Security Analysis Exemption
         elif ctype == "prompt_injection_guard":
+            # 1. Exempt if in explicit security analysis mode or quoting for research
+            context = request.context or {}
+            if context.get("security_analysis_mode") or context.get("analysis_mode"):
+                return False, ""
+
             prompt = str(request.user_prompt or "")
             body = str(args.get("body", ""))
             combined = f"{prompt} {body}".lower()
+
+            # Benign inquiry phrases that quote malicious text for verification
+            benign_markers = [
+                "benign analysis",
+                "cve analysis",
+                "analyzing payload",
+                "security audit quote",
+                "quoted below for testing",
+                "explain the security risk of",
+            ]
+            if any(m in combined for m in benign_markers):
+                return False, ""
             signatures = params.get("signatures", [
                 "ignore previous instructions",
                 "disregard prior",
@@ -223,6 +306,23 @@ class PolicyEngine:
             for sig in signatures:
                 if sig.lower() in combined:
                     return True, f"Policy violation: Prompt injection signature detected: '{sig}'"
+            return False, ""
+
+        # Web Search Query Inspection (Prevent data exfiltration via external search)
+        elif ctype == "web_search_content_inspection":
+            query = str(args.get("query", ""))
+            from app.gateway.redactor import inspect_data_exposure
+            exposure = inspect_data_exposure(query)
+            if exposure.exposure_detected:
+                categories = ", ".join(exposure.exposed_categories)
+                return True, f"Policy violation: Attempted data exfiltration via search query. Query contains {categories}."
+            return False, ""
+
+        # Web Search General Allow
+        elif ctype == "web_search_general_allow":
+            query = str(args.get("query", "")).strip()
+            if query:
+                return True, f"Web search query '{query[:40]}' permitted for external research."
             return False, ""
 
         return False, ""
@@ -344,6 +444,26 @@ def get_default_strict_policy_set() -> PolicySet:
                 condition_type="email_domain_whitelist",
                 parameters={"allowed_domains": ["@traceguard.internal", "@acmecorp.internal"]},
             ),
+            PolicyRule(
+                id="RULE-WEB-01-EXFIL-QUERY-DENY",
+                name="Block Secret Exfiltration via Web Search Query",
+                description="Deny external web search queries that contain detected PII, API tokens, or secrets.",
+                enabled=True,
+                priority=15,
+                tool="web_search",
+                action=DecisionOutcome.DENY,
+                condition_type="web_search_content_inspection",
+            ),
+            PolicyRule(
+                id="RULE-WEB-02-SEARCH-ALLOW",
+                name="Allow Public Research Web Searches",
+                description="Allow external web search queries for benign research that do not leak internal data.",
+                enabled=True,
+                priority=50,
+                tool="web_search",
+                action=DecisionOutcome.ALLOW,
+                condition_type="web_search_general_allow",
+            ),
         ],
     )
 
@@ -392,6 +512,16 @@ def get_permissive_policy_set() -> PolicySet:
                 action=DecisionOutcome.ALLOW,
                 condition_type="email_domain_whitelist",
                 parameters={"allowed_domains": ["*"]},
+            ),
+            PolicyRule(
+                id="RULE-PERM-WEB-ALLOW",
+                name="Allow Any Web Search",
+                description="Allows executing external web searches without query inspection.",
+                enabled=True,
+                priority=100,
+                tool="web_search",
+                action=DecisionOutcome.ALLOW,
+                condition_type="web_search_general_allow",
             ),
         ],
     )

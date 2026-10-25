@@ -103,7 +103,14 @@ class SandboxedTools:
                 from app.tools.db_init import init_sandbox_db
                 init_sandbox_db(DB_SANDBOX_PATH)
 
-            conn = sqlite3.connect(str(DB_SANDBOX_PATH))
+            # Enforce read-only SQLite engine mode for SELECT / catalog queries
+            db_uri = f"file:{DB_SANDBOX_PATH.as_posix()}?mode=ro"
+            try:
+                conn = sqlite3.connect(db_uri, uri=True)
+            except sqlite3.OperationalError:
+                # Fallback to standard path if URI mode unsupported on platform
+                conn = sqlite3.connect(str(DB_SANDBOX_PATH))
+
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
@@ -172,6 +179,51 @@ class SandboxedTools:
                 error=f"send_email execution error: {str(e)}",
             )
 
+    @staticmethod
+    def web_search(query: str, max_results: int = 3) -> ToolExecutionResult:
+        """
+        Controlled web_search tool via Tavily API.
+        Executes external public domain search.
+        Results are strictly tagged as untrusted content.
+        """
+        try:
+            if not query or not str(query).strip():
+                return ToolExecutionResult(
+                    executed=True,
+                    success=False,
+                    error="Argument 'query' is required.",
+                )
+
+            from app.agents.tavily_adapter import TavilySearchAdapter
+            adapter = TavilySearchAdapter()
+            search_res = adapter.search(query=str(query).strip(), max_results=max_results)
+
+            if search_res.get("success"):
+                return ToolExecutionResult(
+                    executed=True,
+                    success=True,
+                    output=search_res,
+                    metadata={
+                        "is_untrusted_content": True,
+                        "query": query,
+                        "is_simulated": search_res.get("is_simulated", False),
+                        "results_count": len(search_res.get("results", [])),
+                    },
+                )
+            else:
+                return ToolExecutionResult(
+                    executed=True,
+                    success=False,
+                    error=search_res.get("error", "Web search failed"),
+                    metadata={"is_untrusted_content": True, "query": query},
+                )
+        except Exception as e:
+            return ToolExecutionResult(
+                executed=True,
+                success=False,
+                error=f"web_search execution error: {str(e)}",
+            )
+
 
 # Tool definitions for tool-use agents (OpenAI / Groq function calling schema)
 REGISTERED_TOOLS_SPEC = [
@@ -234,6 +286,27 @@ REGISTERED_TOOLS_SPEC = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Execute a controlled external web search query via Tavily to retrieve public domain research.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query string (e.g. 'SIEM zero trust guidelines')",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of search results to return (1-5)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -248,6 +321,11 @@ def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> ToolExecutionResu
             to=arguments.get("to", ""),
             subject=arguments.get("subject", ""),
             body=arguments.get("body", ""),
+        )
+    elif tool_name == "web_search":
+        return SandboxedTools.web_search(
+            query=arguments.get("query", ""),
+            max_results=int(arguments.get("max_results", 3)),
         )
     else:
         return ToolExecutionResult(

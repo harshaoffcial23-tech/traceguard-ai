@@ -35,10 +35,12 @@ class GatewayToolDispatcher:
         self,
         gateway: SecurityGateway,
         agent_type: str = "autonomous_mock",
+        agent_role: str = "standard_agent",
         session_id: Optional[str] = None,
     ):
         self.gateway = gateway
         self.agent_type = agent_type
+        self.agent_role = agent_role
         self.session_id = session_id or "autonomous_session"
 
     def invoke_tool(
@@ -58,6 +60,7 @@ class GatewayToolDispatcher:
             tool_name=tool_name,
             arguments=arguments,
             agent_type=self.agent_type,
+            agent_role=self.agent_role,
             session_id=self.session_id,
             user_prompt=user_prompt,
             context=context or {},

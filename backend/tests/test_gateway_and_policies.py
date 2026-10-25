@@ -139,3 +139,26 @@ def test_deny_unregistered_tool(gateway):
     assert decision.allowed is False
     assert "not a registered protected tool" in decision.reason
     assert res.executed is False
+
+
+def test_evaluate_tool_call_developer_api_allow(gateway):
+    """Verify programmatic evaluate_tool_call() returns ALLOW on legitimate query."""
+    decision = gateway.evaluate_tool_call(
+        tool_name="read_file",
+        arguments={"path": "public/company_handbook.txt"},
+        user_prompt="Read handbook",
+    )
+    assert decision.allowed is True
+    assert decision.decision == DecisionOutcome.ALLOW
+
+
+def test_evaluate_tool_call_developer_api_deny(gateway):
+    """Verify programmatic evaluate_tool_call() returns DENY on attack payload."""
+    decision = gateway.evaluate_tool_call(
+        tool_name="query_database",
+        arguments={"query": "SELECT * FROM user_profiles"},
+        user_prompt="Dump users",
+    )
+    assert decision.allowed is False
+    assert decision.decision == DecisionOutcome.DENY
+    assert "user_profiles" in decision.reason
