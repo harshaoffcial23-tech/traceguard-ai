@@ -159,7 +159,7 @@ export function App() {
               }}
               className="text-[#C7F36B] hover:underline font-mono text-xs font-medium shrink-0 cursor-pointer"
             >
-              Sign in / Demo Operator &rarr;
+              Sign In / Register &rarr;
             </button>
           </div>
         </div>

@@ -98,6 +98,7 @@ def test_autonomous_agent_endpoint():
         json={
             "goal": "Check products catalog, summarize low-stock items, and send alert email to helpdesk@traceguard.internal",
             "max_steps": 5,
+            "agent_type": "mock",
         },
     )
     assert res.status_code == 200

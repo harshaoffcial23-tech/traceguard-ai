@@ -12,7 +12,6 @@ interface Scenario {
   decision: 'DENY' | 'ALLOW';
   reason: string;
   invariantTriggered: string;
-  enforcementLatency: string;
 }
 
 export const InteractiveGatewaySimulator: React.FC = () => {
@@ -30,7 +29,6 @@ export const InteractiveGatewaySimulator: React.FC = () => {
       decision: 'DENY',
       reason: "Table 'user_profiles' is strictly restricted to administrator audit sessions. Compound UNION injection detected.",
       invariantTriggered: "INVARIANT_RESTRICTED_TABLE_ACCESS & SQL_AST_PARSER",
-      enforcementLatency: '0.84 ms',
     },
     {
       id: 'data_exfil',
@@ -47,7 +45,6 @@ export const InteractiveGatewaySimulator: React.FC = () => {
       decision: 'DENY',
       reason: "Recipient domain 'adversary-domain.com' is not in approved corporate egress domain allowlist.",
       invariantTriggered: "EGRESS_POLICY_ALLOWLIST & PII_EXPOSURE_FILTER",
-      enforcementLatency: '1.12 ms',
     },
     {
       id: 'path_traversal',
@@ -63,7 +60,6 @@ export const InteractiveGatewaySimulator: React.FC = () => {
       decision: 'DENY',
       reason: 'Sandbox canonicalization trapped relative path escape. Client-supplied agent_role discarded for server-side cryptographic identity.',
       invariantTriggered: "SANDBOX_CANONICAL_BOUNDARY & RBAC_SESSION_VERIFIER",
-      enforcementLatency: '0.65 ms',
     },
     {
       id: 'benign_catalog',
@@ -78,7 +74,6 @@ export const InteractiveGatewaySimulator: React.FC = () => {
       decision: 'ALLOW',
       reason: 'Read-only SELECT operation on catalog table. All parameterized invariants satisfied.',
       invariantTriggered: "POLICY_READONLY_CATALOG_MATCH",
-      enforcementLatency: '0.74 ms',
     },
   ];
 
@@ -202,7 +197,7 @@ export const InteractiveGatewaySimulator: React.FC = () => {
             <div className="absolute inset-0 rounded-full border border-[#C7F36B] animate-ping opacity-25" />
           </div>
           <span className="text-[10px] font-mono text-[#8E969E] mt-2 text-center">
-            Zero-Trust Intercept<br />{activeScenario.enforcementLatency}
+            Zero-Trust Intercept<br />Pre-Execution Gate
           </span>
         </div>
 
@@ -246,8 +241,8 @@ export const InteractiveGatewaySimulator: React.FC = () => {
                   <span className="text-white/90 text-[10px] break-all">{activeScenario.invariantTriggered}</span>
                 </div>
                 <div className="bg-black/40 p-2.5 rounded border border-white/5">
-                  <span className="text-[9px] uppercase text-[#8E969E] block">Pipeline Latency:</span>
-                  <span className="text-[#C7F36B] font-semibold">{activeScenario.enforcementLatency}</span>
+                  <span className="text-[9px] uppercase text-[#8E969E] block">Execution Guard:</span>
+                  <span className="text-[#C7F36B] font-semibold">Zero Bypass</span>
                 </div>
               </div>
             </div>

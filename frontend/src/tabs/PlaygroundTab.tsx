@@ -107,7 +107,7 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ policies }) => {
   const [mode, setMode] = useState<'attack' | 'safe'>('attack');
   const [selectedScenario, setSelectedScenario] = useState<PlaygroundScenario | null>(attackExamples[0]);
   const [prompt, setPrompt] = useState<string>(attackExamples[0].prompt);
-  const [agentType, setAgentType] = useState<string>('mock');
+  const [agentType, setAgentType] = useState<string>('groq');
   const [groqKey, setGroqKey] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<any | null>(null);
@@ -256,8 +256,8 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ policies }) => {
               onChange={(e) => setAgentType(e.target.value)}
               className="bg-black/80 border border-white/15 text-white text-xs rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-[#C7F36B] cursor-pointer"
             >
-              <option value="mock">Deterministic Synthetic Agent (Offline Lab)</option>
-              <option value="groq">Groq Cloud LLM (llama-3.3-70b-versatile)</option>
+              <option value="groq">Live AI Agent (llama-3.3-70b-versatile via Groq)</option>
+              <option value="mock">Deterministic Test Harness (Offline Security Lab)</option>
             </select>
 
             {agentType === 'groq' && (

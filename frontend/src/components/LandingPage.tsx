@@ -427,13 +427,13 @@ class TraceGuardToolInterceptor:
             <span className="font-mono text-xs font-semibold text-white tracking-wider uppercase mb-1">
               TESTABLE
             </span>
-            <span className="text-xs text-[#8E969E]">98 Adversarial Test Suites</span>
+            <span className="text-xs text-[#8E969E]">100 Automated Security Tests</span>
           </div>
           <div className="flex flex-col items-center">
             <span className="font-mono text-xs font-semibold text-white tracking-wider uppercase mb-1">
-              SUB-MILLISECOND
+              FAIL-CLOSED
             </span>
-            <span className="text-xs text-[#8E969E]">0.84ms Median Intercept Overhead</span>
+            <span className="text-xs text-[#8E969E]">Pre-Execution Invariant Gate</span>
           </div>
         </div>
       </section>

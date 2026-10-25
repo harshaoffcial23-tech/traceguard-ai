@@ -54,9 +54,11 @@ class SecurityGateway:
         max_actions_per_session: int = 10,
         max_consecutive_denials: int = 3,
         max_session_duration_seconds: float = 60.0,
+        storage: Optional[Any] = None,
     ):
         self.policy_engine = policy_engine or PolicyEngine(get_default_strict_policy_set())
         self.audit_log: List[AuditEvent] = []
+        self.storage = storage
         self.emergency_stopped: bool = False
         self.max_actions_per_session = max_actions_per_session
         self.max_consecutive_denials = max_consecutive_denials
@@ -429,6 +431,11 @@ class SecurityGateway:
         )
 
         self.audit_log.append(audit_event)
+        if self.storage:
+            try:
+                self.storage.save_audit_event(audit_event)
+            except Exception:
+                pass
         return decision, execution_result, audit_event
 
     def _build_denied_response(
@@ -474,4 +481,9 @@ class SecurityGateway:
             context=redact_value(request.context),
         )
         self.audit_log.append(audit_event)
+        if self.storage:
+            try:
+                self.storage.save_audit_event(audit_event)
+            except Exception:
+                pass
         return decision, exec_res, audit_event

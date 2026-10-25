@@ -28,7 +28,6 @@ export const Interactive3DGateway: React.FC = () => {
 
   const [activeScenario, setActiveScenario] = useState<'normal' | 'attack' | 'invariant'>('attack');
   const [hoveredNode, setHoveredNode] = useState<Node3D | null>(null);
-  const [blockedEventsCount, setBlockedEventsCount] = useState<number>(42);
 
   // Rotation angles
   const rotX = useRef<number>(0.2);
@@ -193,7 +192,6 @@ export const Interactive3DGateway: React.FC = () => {
           p.progress = 0;
           if (p.isAttack) {
             triggerShockwave('rgba(239, 68, 68, 1)');
-            setBlockedEventsCount((c) => c + 1);
           } else {
             triggerShockwave('rgba(199, 243, 107, 1)');
           }
@@ -328,12 +326,12 @@ export const Interactive3DGateway: React.FC = () => {
       {/* Top Right Live Telemetry */}
       <div className="absolute top-4 right-4 z-20 flex items-center gap-3 pointer-events-none">
         <div className="px-3 py-1.5 rounded-lg bg-black/70 border border-white/10 backdrop-blur-md text-right">
-          <div className="text-[10px] font-mono text-[#8E969E]">Deflected Exploits</div>
-          <div className="text-sm font-mono font-semibold text-[#EF4444]">{blockedEventsCount}</div>
+          <div className="text-[10px] font-mono text-[#8E969E]">Gateway Policy</div>
+          <div className="text-xs font-mono font-semibold text-[#C7F36B]">Deny-by-Default</div>
         </div>
         <div className="px-3 py-1.5 rounded-lg bg-black/70 border border-white/10 backdrop-blur-md text-right">
-          <div className="text-[10px] font-mono text-[#8E969E]">Pipeline Latency</div>
-          <div className="text-sm font-mono font-semibold text-[#C7F36B]">0.84 ms</div>
+          <div className="text-[10px] font-mono text-[#8E969E]">Enforcement</div>
+          <div className="text-xs font-mono font-semibold text-white">Pre-Execution Gate</div>
         </div>
       </div>
 

@@ -53,13 +53,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  const handleQuickDemoFill = () => {
-    setEmail('admin@traceguard.internal');
-    setPassword('AdminSecurePass123!');
-    setMode('login');
-    setError(null);
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
       <div className="relative w-full max-w-md glass-panel border border-white/20 rounded-2xl shadow-2xl p-6 sm:p-7 overflow-hidden">
@@ -160,7 +153,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="operator@traceguard.internal"
+                placeholder="operator@your-domain.com"
                 className="w-full bg-black/80 border border-white/10 rounded-xl py-2 pl-9 pr-3 text-white placeholder-[#535C64] focus:outline-hidden focus:border-[#C7F36B] transition font-mono"
               />
             </div>
@@ -204,18 +197,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             )}
           </button>
         </form>
-
-        {/* Quick Demo Login Option */}
-        <div className="mt-5 pt-4 border-t border-white/10 flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={handleQuickDemoFill}
-            className="text-[11px] font-mono text-[#8E969E] hover:text-[#C7F36B] flex items-center justify-center gap-1.5 transition py-2 px-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 cursor-pointer"
-          >
-            <CheckCircle2 className="w-3.5 h-3.5 text-[#C7F36B]" />
-            <span>Fill Demo Admin (admin@traceguard.internal)</span>
-          </button>
-        </div>
       </div>
     </div>
   );

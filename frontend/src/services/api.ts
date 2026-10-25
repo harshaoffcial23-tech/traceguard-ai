@@ -251,6 +251,8 @@ export async function runAutonomousAgent(params: {
   goal: string;
   max_steps?: number;
   policy_set_id?: string;
+  agent_type?: string;
+  groq_api_key?: string;
 }): Promise<any> {
   const res = await authFetch(`${API_BASE}/agent/autonomous-run`, {
     method: 'POST',

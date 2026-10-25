@@ -285,7 +285,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             <Layers className="w-4 h-4" />
           </div>
           <div>
-            <div className="text-white font-medium">Core Security Benchmark Suite (98 Invariant Tests)</div>
+            <div className="text-white font-medium">Core Security Benchmark Suite</div>
             <div className="text-[#8E969E] text-[11px]">
               Execute automated adversarial penetration scenarios and generate compliance scorecards.
             </div>

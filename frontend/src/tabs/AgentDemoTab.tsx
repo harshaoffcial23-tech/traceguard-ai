@@ -53,6 +53,7 @@ export const AgentDemoTab: React.FC = () => {
   ];
 
   const [selectedGoal, setSelectedGoal] = useState<string>(predefinedGoals[0].goal);
+  const [engine, setEngine] = useState<'groq' | 'test_deterministic'>('groq');
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<AutonomousRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,10 +71,11 @@ export const AgentDemoTab: React.FC = () => {
       const data = await runAutonomousAgent({
         goal: selectedGoal.trim(),
         max_steps: 4,
+        agent_type: engine,
       });
       setResult(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to run autonomous agent demo.');
+      setError(err.message || 'Failed to run autonomous agent.');
     } finally {
       setLoading(false);
     }
@@ -144,6 +146,35 @@ export const AgentDemoTab: React.FC = () => {
               </TiltCard>
             );
           })}
+        </div>
+
+        {/* Engine Selector */}
+        <div className="flex flex-wrap items-center gap-3 text-xs pt-2 pb-1 border-t border-white/10">
+          <span className="text-[#8E969E] font-mono">Agent Engine:</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setEngine('groq')}
+              className={`px-3 py-1.5 rounded-xl font-mono text-xs transition cursor-pointer border ${
+                engine === 'groq'
+                  ? 'bg-[#C7F36B]/20 text-[#C7F36B] border-[#C7F36B]/40 shadow-xs'
+                  : 'bg-black/40 text-[#8E969E] hover:text-white border-white/10'
+              }`}
+            >
+              Live AI Agent (llama-3.3-70b-versatile via Groq)
+            </button>
+            <button
+              type="button"
+              onClick={() => setEngine('test_deterministic')}
+              className={`px-3 py-1.5 rounded-xl font-mono text-xs transition cursor-pointer border ${
+                engine === 'test_deterministic'
+                  ? 'bg-white/15 text-white border-white/30 shadow-xs'
+                  : 'bg-black/40 text-[#8E969E] hover:text-white border-white/10'
+              }`}
+            >
+              Deterministic Test Harness (Offline Security Lab)
+            </button>
+          </div>
         </div>
 
         {/* Goal text & Run button */}
