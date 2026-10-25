@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: traceguard-ai
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    region: oregon
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: HOST
+        value: 0.0.0.0
+      - key: ENVIRONMENT
+        value: production
+      - key: STRICT_GATEWAY_ENFORCEMENT
+        value: "true"
+      - key: ENABLE_DATA_EXPOSURE_INSPECTION
+        value: "true"
+      - key: MASK_SECRETS_IN_AUDIT
+        value: "true"
+      - key: GROQ_API_KEY
+        sync: false
