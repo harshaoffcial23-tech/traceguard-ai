@@ -284,15 +284,18 @@ class SecurityGateway:
         else:
             effective_role = server_authorized_role
 
-        # Scoped capability check based on effective role
-        role_capabilities = {
-            "admin_agent": {"read_file", "query_database", "send_email", "web_search"},
-            "standard_agent": {"read_file", "query_database", "send_email", "web_search"},
-            "readonly_agent": {"read_file", "query_database", "web_search"},
-            "catalog_agent": {"query_database"},
-            "guest": {"query_database"},
-        }
-        allowed_tools = role_capabilities.get(effective_role, {"query_database"})
+        # Scoped capability check based on registered agent permissions or default role capabilities
+        if db_agent:
+            allowed_tools = set(db_agent.allowed_tools)
+        else:
+            role_capabilities = {
+                "admin_agent": {"read_file", "query_database", "send_email", "web_search"},
+                "standard_agent": {"read_file", "query_database", "send_email", "web_search"},
+                "readonly_agent": {"read_file", "query_database", "web_search"},
+                "catalog_agent": {"query_database"},
+                "guest": {"query_database"},
+            }
+            allowed_tools = role_capabilities.get(effective_role, {"query_database"})
         if request.tool_name not in allowed_tools:
             decision = GatewayDecision(
                 allowed=False,

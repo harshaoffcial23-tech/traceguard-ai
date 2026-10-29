@@ -40,9 +40,11 @@ from app.gateway.auth import (
     generate_csrf_token,
     generate_session_token,
     get_current_user,
+    get_optional_current_user,
     hash_password,
     hash_token,
     is_cookie_secure,
+    is_production,
     require_roles,
     verify_csrf_and_origin,
     verify_dummy_password,
@@ -549,7 +551,7 @@ def get_audit_events(
 # Stage 6: Tamper-Evident Hash-Linked Audit Chain Verification
 # -------------------------------------------------------------
 @router.get("/audit/verify-chain", response_model=AuditChainVerificationResult)
-def verify_audit_chain_integrity(current_user: User = Depends(get_current_user)):
+def verify_audit_chain_integrity(current_user: Optional[User] = Depends(get_optional_current_user)):
     """
     Cryptographically verifies the SHA-256 hash-chain of all stored audit events.
     Detects any out-of-band record insertions, deletions, or data tampering.
@@ -584,7 +586,7 @@ def verify_agent_caller(request: Request) -> Dict[str, Any]:
         token = request.headers.get("X-TraceGuard-Key", "").strip()
 
     if token:
-        if token in VALID_DEV_AGENT_TOKENS:
+        if not is_production() and token in VALID_DEV_AGENT_TOKENS:
             return {"authenticated": True, "token_type": "dev_key", "identity": "authorized_agent"}
         token_h = hash_token(token)
         session = storage.get_session(token_h)
@@ -720,7 +722,7 @@ def agent_dispatch(
 # Stage 5: Agent Connect & Permissions Management Endpoints
 # -------------------------------------------------------------
 @router.get("/connect/agents", response_model=List[AgentRecord])
-def get_connect_agents(current_user: User = Depends(get_current_user)):
+def get_connect_agents(current_user: Optional[User] = Depends(get_optional_current_user)):
     """Lists registered agents, status, roles, and tool permissions."""
     return storage.list_agents()
 
@@ -758,7 +760,7 @@ def get_connect_activity(
     limit: int = 50,
     current_user: User = Depends(get_current_user),
 ):
-    """Returns recent audit events for connected agents."""
+    """Returns recent audit events for connected agents. Requires authenticated user."""
     return storage.list_audit_events(agent_type=agent_id, limit=limit)
 
 

@@ -3,10 +3,9 @@ import { Navbar } from './components/Navbar';
 import { LandingPage } from './components/LandingPage';
 import { AuthModal } from './components/AuthModal';
 import { HomeTab } from './tabs/HomeTab';
-import { PlaygroundTab } from './tabs/PlaygroundTab';
 import { AgentDemoTab } from './tabs/AgentDemoTab';
 import { ActivityTab } from './tabs/ActivityTab';
-import { AdvancedTab } from './tabs/AdvancedTab';
+import { DeveloperToolsTab } from './tabs/DeveloperToolsTab';
 import {
   fetchHealth,
   fetchPolicies,
@@ -174,7 +173,7 @@ export function App() {
           </div>
         ) : (
           <>
-            {activeTab === 'home' && (
+            {(activeTab === 'dashboard' || activeTab === 'home') && (
               <HomeTab
                 health={health}
                 runs={runs}
@@ -182,17 +181,29 @@ export function App() {
                 onNavigate={setActiveTab}
                 onQuickRun={handleQuickRun}
                 isRunningTest={isRunningTest}
+                isEmergencyStopped={isEmergencyStopped}
               />
             )}
 
-            {activeTab === 'playground' && <PlaygroundTab policies={policies} />}
+            {(activeTab === 'agents' || activeTab === 'agent_demo') && <AgentDemoTab />}
 
-            {activeTab === 'agent_demo' && <AgentDemoTab />}
+            {activeTab === 'activity' && (
+              <ActivityTab
+                currentUser={currentUser}
+                onOpenAuth={() => {
+                  setAuthModalMode('login');
+                  setIsAuthModalOpen(true);
+                }}
+              />
+            )}
 
-            {activeTab === 'activity' && <ActivityTab />}
-
-            {activeTab === 'advanced' && (
-              <AdvancedTab onNavigateTab={setActiveTab} />
+            {(activeTab === 'developer' || activeTab === 'playground' || activeTab === 'advanced') && (
+              <DeveloperToolsTab
+                policies={policies}
+                initialSubTab={activeTab === 'playground' ? 'playground' : activeTab === 'advanced' ? 'benchmarks' : 'playground'}
+                onNavigateTab={setActiveTab}
+                currentUser={currentUser}
+              />
             )}
           </>
         )}

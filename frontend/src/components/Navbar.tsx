@@ -2,12 +2,11 @@ import React from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
-  Play,
   Bot,
   Activity,
-  Layers,
+  Terminal,
+  LayoutDashboard,
   RotateCcw,
-  Home,
   LogIn,
   LogOut,
   User as UserIcon,
@@ -40,11 +39,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
 }) => {
   const primaryTabs = [
-    { id: 'home', label: 'Overview', icon: Home },
-    { id: 'playground', label: 'Security Playground', icon: Play },
-    { id: 'agent_demo', label: 'Agent Connect', icon: Bot },
-    { id: 'activity', label: 'Activity & Audit', icon: Activity },
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'agents', label: 'My AI Agents', icon: Bot },
+    { id: 'activity', label: 'Activity & Security', icon: Activity },
+    { id: 'developer', label: 'Developer Tools', icon: Terminal },
   ];
+
+  // Helper to determine if a tab is visually active (handling legacy aliases)
+  const isTabActive = (tabId: string) => {
+    if (tabId === 'dashboard') return activeTab === 'dashboard' || activeTab === 'home';
+    if (tabId === 'agents') return activeTab === 'agents' || activeTab === 'agent_demo';
+    if (tabId === 'activity') return activeTab === 'activity';
+    if (tabId === 'developer') return activeTab === 'developer' || activeTab === 'playground' || activeTab === 'advanced';
+    return activeTab === tabId;
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-black/75 border-b border-white/[0.08] px-4 sm:px-6 py-3.5">
@@ -113,43 +121,27 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* 4 Primary Navigation Destinations + Advanced Pill */}
+        {/* 4 Primary Navigation Destinations */}
         <nav className="flex flex-wrap items-center gap-1.5 p-1 rounded-full liquid-pill" aria-label="Workspace Navigation">
           {primaryTabs.map((t) => {
             const Icon = t.icon;
-            const isActive = activeTab === t.id;
+            const active = isTabActive(t.id);
             return (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setActiveTab(t.id)}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                  isActive
+                  active
                     ? 'bg-white/15 text-white shadow-xs border border-white/20'
                     : 'text-[#8E969E] hover:text-white hover:bg-white/[0.05]'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#C7F36B]' : 'text-[#8E969E]'}`} />
+                <Icon className={`w-3.5 h-3.5 ${active ? 'text-[#C7F36B]' : 'text-[#8E969E]'}`} />
                 <span>{t.label}</span>
               </button>
             );
           })}
-
-          {/* Advanced Section Tab */}
-          <div className="h-4 w-[1px] bg-white/10 mx-1 hidden sm:block"></div>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('advanced')}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'advanced'
-                ? 'bg-white/15 text-white shadow-xs border border-white/20'
-                : 'text-[#8E969E] hover:text-white hover:bg-white/[0.05]'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5 text-purple-400" />
-            <span>Benchmarks</span>
-          </button>
         </nav>
 
         {/* Right Status Indicator, User Profile & Auth Controls */}

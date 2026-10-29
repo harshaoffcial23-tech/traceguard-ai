@@ -15,17 +15,27 @@ import {
   Globe,
   Sliders,
   Terminal,
+  ShieldAlert,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
-import { AuditEvent } from '../types';
+import { AuditEvent, User } from '../types';
 import { fetchAuditEvents } from '../services/api';
 
 interface ActivityTabProps {
   initialEventId?: string | null;
+  currentUser?: User | null;
+  onOpenAuth?: () => void;
 }
 
-export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
+export const ActivityTab: React.FC<ActivityTabProps> = ({
+  initialEventId,
+  currentUser,
+  onOpenAuth,
+}) => {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isGuestMode, setIsGuestMode] = useState<boolean>(!currentUser);
   const [filterDecision, setFilterDecision] = useState<'all' | 'blocked' | 'allowed' | 'exposure'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(initialEventId || null);
@@ -35,16 +45,21 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
     try {
       const data = await fetchAuditEvents({ limit: 100 });
       setEvents(data);
-    } catch (err) {
-      console.error('Failed to load audit events:', err);
+      setIsGuestMode(false);
+    } catch (err: any) {
+      if (err?.status === 401 || err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
+        setIsGuestMode(true);
+      }
+      console.warn('Audit events fetch notice:', err?.message || err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    setIsGuestMode(!currentUser);
     loadEvents();
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     if (initialEventId) {
@@ -83,6 +98,80 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
     }
   };
 
+  const renderDecisionBadge = (ev: AuditEvent) => {
+    const dec = (ev.decision || '').toLowerCase();
+    if (dec === 'deny') {
+      return (
+        <span className="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/30">
+          Blocked / Denied
+        </span>
+      );
+    }
+    if (dec === 'allow') {
+      return (
+        <span className="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-[#C7F36B]/15 text-[#C7F36B] border border-[#C7F36B]/30">
+          Allowed
+        </span>
+      );
+    }
+    if (dec === 'timeout') {
+      return (
+        <span className="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+          Timed Out
+        </span>
+      );
+    }
+    if (dec === 'error') {
+      return (
+        <span className="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
+          Failed
+        </span>
+      );
+    }
+    if (dec === 'no_action') {
+      return (
+        <span className="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-zinc-500/15 text-zinc-300 border border-zinc-500/30">
+          No Action
+        </span>
+      );
+    }
+    return (
+      <span className="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+        Requested
+      </span>
+    );
+  };
+
+  const renderExecutionBadge = (ev: AuditEvent) => {
+    const dec = (ev.decision || '').toLowerCase();
+    if (ev.executed) {
+      return (
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          Executed
+        </span>
+      );
+    }
+    if (dec === 'timeout') {
+      return (
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20">
+          Timed Out
+        </span>
+      );
+    }
+    if (dec === 'error') {
+      return (
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">
+          Failed
+        </span>
+      );
+    }
+    return (
+      <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white/[0.04] text-[#8E969E] border border-white/10">
+        Not Executed
+      </span>
+    );
+  };
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-2">
       {/* 1. Header & Controls */}
@@ -95,20 +184,41 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
           <h1 className="text-2xl sm:text-3xl font-semibold text-white tracking-tight">
             Activity & Security Audit Log
           </h1>
-          <p className="text-xs sm:text-sm text-[#8E969E] mt-1">
-            Tamper-evident record of all agent tool invocations, policy evaluations, and data exposure redacting.
+          <p className="text-xs sm:text-sm text-[#8E969E] mt-1 max-w-3xl leading-relaxed">
+            Tamper-evident record of all agent tool invocations, policy evaluations, and data exposure redacting. Each audit event is cryptographically linked to its predecessor via a SHA-256 hash digest (hash chain), ensuring that any database modification, deletion, or out-of-band insertion immediately breaks verification.
           </p>
         </div>
 
         <button
           type="button"
           onClick={loadEvents}
-          className="glass-button-secondary px-4 py-2 rounded-full text-xs font-mono text-white/80 hover:text-white transition flex items-center gap-2 cursor-pointer self-start sm:self-auto"
+          className="glass-button-secondary px-4 py-2 rounded-full text-xs font-mono text-white/80 hover:text-white transition flex items-center gap-2 cursor-pointer self-start sm:self-auto shrink-0"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Refresh Feed</span>
         </button>
       </div>
+
+      {/* Guest Mode Informational Banner */}
+      {isGuestMode && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 text-amber-200">
+            <Lock className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>
+              Viewing in guest exploration mode. Audit events are protected by operational RBAC. Please sign in as an Operator to inspect the live audit log.
+            </span>
+          </div>
+          {onOpenAuth && (
+            <button
+              type="button"
+              onClick={onOpenAuth}
+              className="px-3.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 font-mono text-[11px] font-medium shrink-0 transition cursor-pointer"
+            >
+              Sign In as Operator &rarr;
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 2. Filters & Search Bar */}
       <div className="glass-panel rounded-2xl border border-white/10 p-5 space-y-4">
@@ -136,7 +246,7 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
                   : 'bg-black/40 text-[#8E969E] hover:text-white border-white/5'
               }`}
             >
-              Blocked Only ({events.filter((e) => e.decision === 'deny').length})
+              Blocked / Denied ({events.filter((e) => e.decision === 'deny').length})
             </button>
 
             <button
@@ -148,7 +258,7 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
                   : 'bg-black/40 text-[#8E969E] hover:text-white border-white/5'
               }`}
             >
-              Allowed Only ({events.filter((e) => e.decision === 'allow').length})
+              Allowed ({events.filter((e) => e.decision === 'allow').length})
             </button>
 
             <button
@@ -186,11 +296,12 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
           </div>
         ) : filteredEvents.length === 0 ? (
           <div className="p-12 text-center text-xs text-[#8E969E] font-mono">
-            No audit events match the selected criteria.
+            {isGuestMode
+              ? 'No audit events visible in guest mode. Sign in with an Operator role to inspect all persistent audit records.'
+              : 'No audit events match the selected criteria.'}
           </div>
         ) : (
           filteredEvents.map((ev) => {
-            const isBlocked = ev.decision === 'deny';
             const isExpanded = expandedId === ev.event_id;
 
             return (
@@ -203,7 +314,7 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
                     </div>
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2.5 flex-wrap">
                         <span className="font-mono text-xs font-semibold text-white">
                           {ev.tool_name}
                         </span>
@@ -222,20 +333,15 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ initialEventId }) => {
                   </div>
 
                   {/* Right: Badges & Expand Trigger */}
-                  <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
-                    <span
-                      className={`text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full ${
-                        isBlocked
-                          ? 'bg-red-500/15 text-red-300 border border-red-500/30'
-                          : 'bg-[#C7F36B]/15 text-[#C7F36B] border border-[#C7F36B]/30'
-                      }`}
-                    >
-                      {isBlocked ? 'Blocked' : 'Allowed'}
-                    </span>
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto flex-wrap">
+                    {renderDecisionBadge(ev)}
+                    {renderExecutionBadge(ev)}
 
-                    <span className="text-[11px] font-mono text-[#535C64] hidden sm:inline">
-                      {ev.executed ? 'Executed' : 'Prevented'}
-                    </span>
+                    {ev.data_exposure_detected && (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/30">
+                        Data Redacted
+                      </span>
+                    )}
 
                     <button
                       type="button"

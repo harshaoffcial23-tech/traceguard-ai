@@ -292,3 +292,155 @@ def test_12_server_side_agent_permissions_enforcement():
     assert data["decision"] == "deny"
     assert data["executed"] is False
     assert "permissions" in data["reason"].lower() or "role" in data["reason"].lower()
+
+
+def test_13_dynamic_permission_revocation_and_restoration():
+    """
+    13. Verifies that updating permissions via the Connect API dynamically alters
+    subsequent authorization decisions in real-time, proving server-side enforcement.
+    """
+    storage = Storage()
+    agent_id = "standard_agent"
+    original_tools = ["read_file", "query_database", "send_email", "web_search"]
+    admin_client = TestClient(app)
+
+    # Ensure admin user exists and obtain auth token
+    login_resp = admin_client.post(
+        "/api/auth/login",
+        json={"email": "admin@traceguard.internal", "password": "AdminSecurePass123!"},
+    )
+    assert login_resp.status_code == 200
+    admin_token = login_resp.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    try:
+        # Step 1: Revoke 'read_file' permission from standard_agent
+        revoked_tools = ["query_database", "send_email", "web_search"]
+        put_resp = admin_client.put(
+            f"/api/connect/agents/{agent_id}/permissions",
+            json={"allowed_tools": revoked_tools},
+            headers=admin_headers,
+        )
+        assert put_resp.status_code == 200
+        assert "read_file" not in put_resp.json()["allowed_tools"]
+
+        # Step 2: Dispatch read_file for standard_agent -> MUST BE DENIED
+        dispatch_blocked = client.post(
+            "/api/v1/agent/dispatch",
+            json={
+                "agent_id": agent_id,
+                "tool_name": "read_file",
+                "arguments": {"path": "public/company_handbook.txt"},
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert dispatch_blocked.status_code == 200
+        data_blocked = dispatch_blocked.json()
+        assert data_blocked["decision"] == "deny"
+        assert data_blocked["executed"] is False
+        assert "permission" in data_blocked["reason"].lower()
+
+        # Step 3: Restore 'read_file' permission
+        restore_resp = admin_client.put(
+            f"/api/connect/agents/{agent_id}/permissions",
+            json={"allowed_tools": original_tools},
+            headers=admin_headers,
+        )
+        assert restore_resp.status_code == 200
+        assert "read_file" in restore_resp.json()["allowed_tools"]
+
+        # Step 4: Dispatch read_file again -> MUST BE ALLOWED & EXECUTED
+        dispatch_allowed = client.post(
+            "/api/v1/agent/dispatch",
+            json={
+                "agent_id": agent_id,
+                "tool_name": "read_file",
+                "arguments": {"path": "public/company_handbook.txt"},
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert dispatch_allowed.status_code == 200
+        data_allowed = dispatch_allowed.json()
+        assert data_allowed["decision"] == "allow"
+        assert data_allowed["executed"] is True
+
+    finally:
+        # Always restore original permissions
+        storage.update_agent_permissions(agent_id=agent_id, allowed_tools=original_tools)
+
+
+def test_14_connect_agent_directory_access_control():
+    """
+    14. Verifies Agent Connect access control:
+    - Public / guest can list registered agents (read-only directory).
+    - Unauthenticated callers cannot modify permissions (401).
+    - Invalid tokens are rejected with 401.
+    """
+    anon_client = TestClient(app)
+
+    # 1. Unauthenticated read-only directory listing
+    r_list = anon_client.get("/api/connect/agents")
+    assert r_list.status_code == 200
+    agents = r_list.json()
+    assert isinstance(agents, list)
+    assert any(a["agent_id"] == "standard_agent" for a in agents)
+
+    # 2. Unauthenticated permission update rejected
+    r_unauth_put = anon_client.put(
+        "/api/connect/agents/standard_agent/permissions",
+        json={"allowed_tools": ["read_file"]},
+    )
+    assert r_unauth_put.status_code == 401
+
+    # 3. Invalid token rejected
+    r_invalid_put = anon_client.put(
+        "/api/connect/agents/standard_agent/permissions",
+        json={"allowed_tools": ["read_file"]},
+        headers={"Authorization": "Bearer fake_invalid_token_999"},
+    )
+    assert r_invalid_put.status_code == 401
+
+
+def test_15_production_environment_rejects_dev_tokens_fails_closed(monkeypatch):
+    """
+    15. Security Invariant: Development agent tokens cannot silently become
+    valid production credentials. When TRACEGUARD_ENV=production, dev tokens
+    are rejected and authentication fails closed with HTTP 401.
+    """
+    monkeypatch.setenv("TRACEGUARD_ENV", "production")
+
+    # 1. Dispatching with dev token in production MUST FAIL with 401
+    resp = client.post(
+        "/api/v1/agent/dispatch",
+        json={
+            "agent_id": "readonly_agent",
+            "tool_name": "read_file",
+            "arguments": {"path": "public/company_handbook.txt"},
+        },
+        headers={"Authorization": "Bearer tg_agent_dev_token_2026"},
+    )
+    assert resp.status_code == 401
+    assert "authentication required" in resp.json()["detail"].lower()
+
+    # 2. X-Agent-Key header with dev token in production MUST ALSO FAIL with 401
+    resp_header = client.post(
+        "/api/v1/agent/dispatch",
+        json={
+            "agent_id": "readonly_agent",
+            "tool_name": "read_file",
+            "arguments": {"path": "public/company_handbook.txt"},
+        },
+        headers={"X-Agent-Key": "tg_agent_dev_token_2026"},
+    )
+    assert resp_header.status_code == 401
+
+    # 3. /connect/activity requires authenticated user and rejects dev tokens in production
+    resp_act = client.get(
+        "/api/connect/activity",
+        headers={"Authorization": "Bearer tg_agent_dev_token_2026"},
+    )
+    assert resp_act.status_code == 401
+
+    # 4. /connect/activity rejects anonymous guests
+    resp_act_anon = client.get("/api/connect/activity")
+    assert resp_act_anon.status_code == 401

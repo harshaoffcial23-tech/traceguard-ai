@@ -32,7 +32,12 @@ def ensure_fresh_sandbox_db(request):
 
     # Determine if current test file explicitly tests authentication & security rules
     test_path_str = str(getattr(request.node, "path", "")) or str(getattr(request, "path", ""))
-    is_auth_or_sec_test = "test_auth" in test_path_str or "test_security" in test_path_str
+    is_auth_or_sec_test = (
+        "test_auth" in test_path_str
+        or "test_security" in test_path_str
+        or "test_agent_dispatch" in test_path_str
+        or "test_audit_hash_chain" in test_path_str
+    )
 
     if is_auth_or_sec_test:
         # Auth tests must exercise real authentication without fixture bypasses

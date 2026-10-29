@@ -192,34 +192,34 @@ class TraceGuardToolInterceptor:
           >
             <button
               type="button"
-              onClick={() => onNavigate('home')}
+              onClick={() => onNavigate('dashboard')}
               className="liquid-pill-link hover:text-white transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40 rounded px-1 cursor-pointer"
             >
-              Overview
+              Dashboard
             </button>
             <span className="text-white/10 select-none">·</span>
             <button
               type="button"
-              onClick={() => onNavigate('playground')}
+              onClick={() => onNavigate('agents')}
               className="liquid-pill-link hover:text-white transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40 rounded px-1 cursor-pointer"
             >
-              Playground
+              My AI Agents
             </button>
             <span className="text-white/10 select-none">·</span>
             <button
               type="button"
-              onClick={() => onNavigate('agent_demo')}
+              onClick={() => onNavigate('activity')}
               className="liquid-pill-link hover:text-white transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40 rounded px-1 cursor-pointer"
             >
-              Agent Demo
+              Activity & Security
             </button>
             <span className="text-white/10 select-none">·</span>
             <button
               type="button"
-              onClick={() => onNavigate('advanced')}
+              onClick={() => onNavigate('developer')}
               className="liquid-pill-link hover:text-white transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40 rounded px-1 cursor-pointer"
             >
-              Benchmarks
+              Developer Tools
             </button>
           </nav>
 
@@ -278,41 +278,41 @@ class TraceGuardToolInterceptor:
               type="button"
               onClick={() => {
                 setMobileMenuOpen(false);
-                onNavigate('home');
+                onNavigate('dashboard');
               }}
               className="w-full text-left py-2.5 px-3 rounded-lg text-sm font-medium text-[#EDEDED] hover:bg-white/[0.06] transition"
             >
-              Overview
+              Dashboard
             </button>
             <button
               type="button"
               onClick={() => {
                 setMobileMenuOpen(false);
-                onNavigate('playground');
+                onNavigate('agents');
               }}
               className="w-full text-left py-2.5 px-3 rounded-lg text-sm font-medium text-[#EDEDED] hover:bg-white/[0.06] transition"
             >
-              Security Playground
+              My AI Agents
             </button>
             <button
               type="button"
               onClick={() => {
                 setMobileMenuOpen(false);
-                onNavigate('agent_demo');
+                onNavigate('activity');
               }}
               className="w-full text-left py-2.5 px-3 rounded-lg text-sm font-medium text-[#EDEDED] hover:bg-white/[0.06] transition"
             >
-              Autonomous Agent Demo
+              Activity & Security
             </button>
             <button
               type="button"
               onClick={() => {
                 setMobileMenuOpen(false);
-                onNavigate('advanced');
+                onNavigate('developer');
               }}
               className="w-full text-left py-2.5 px-3 rounded-lg text-sm font-medium text-[#EDEDED] hover:bg-white/[0.06] transition"
             >
-              Attack Benchmarks
+              Developer Tools
             </button>
             <div className="h-[1px] bg-white/10 my-1" />
             {currentUser ? (
@@ -718,31 +718,31 @@ class TraceGuardToolInterceptor:
           <div className="flex items-center gap-6 font-mono text-[11px]">
             <button
               type="button"
-              onClick={() => onNavigate('home')}
+              onClick={() => onNavigate('dashboard')}
               className="hover:text-white transition cursor-pointer"
             >
               Dashboard
             </button>
             <button
               type="button"
-              onClick={() => onNavigate('playground')}
+              onClick={() => onNavigate('agents')}
               className="hover:text-white transition cursor-pointer"
             >
-              Playground
+              My AI Agents
             </button>
             <button
               type="button"
-              onClick={() => onNavigate('agent_demo')}
+              onClick={() => onNavigate('activity')}
               className="hover:text-white transition cursor-pointer"
             >
-              Agent Demo
+              Activity & Security
             </button>
             <button
               type="button"
-              onClick={() => onNavigate('advanced')}
+              onClick={() => onNavigate('developer')}
               className="hover:text-white transition cursor-pointer"
             >
-              Benchmarks
+              Developer Tools
             </button>
           </div>
 

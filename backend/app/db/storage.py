@@ -361,7 +361,7 @@ class Storage:
             cursor = conn.cursor()
 
             # Hash-linking calculation for tamper-evident audit ledger
-            cursor.execute("SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1")
+            cursor.execute("SELECT event_hash FROM audit_events WHERE event_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1")
             prev_row = cursor.fetchone()
             prev_keys = prev_row.keys() if prev_row and hasattr(prev_row, "keys") else []
             prev_hash = prev_row["event_hash"] if (prev_row and "event_hash" in prev_keys and prev_row["event_hash"]) else "0" * 64
@@ -480,12 +480,12 @@ class Storage:
 
     def verify_audit_chain(self) -> AuditChainVerificationResult:
         """
-        Cryptographically verifies the hash-linked audit chain.
+        Cryptographically verifies the SHA-256 hash-linked audit chain.
         Detects out-of-band modifications, record tampering, deletions, or insertions.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT rowid, * FROM audit_events ORDER BY rowid ASC")
+            cursor.execute("SELECT rowid, * FROM audit_events WHERE event_hash IS NOT NULL ORDER BY rowid ASC")
             rows = cursor.fetchall()
 
             if not rows:
@@ -493,19 +493,14 @@ class Storage:
                     total_events=0,
                     verified_events=0,
                     is_valid=True,
-                    message="Audit log is empty. Chain is intact.",
+                    message="Audit log is empty. Genesis state ready.",
                 )
 
             expected_prev_hash = "0" * 64
             verified_count = 0
             for idx, row in enumerate(rows):
-                row_keys = row.keys() if hasattr(row, "keys") else []
-                stored_prev = row["previous_event_hash"] if "previous_event_hash" in row_keys else None
-                stored_hash = row["event_hash"] if "event_hash" in row_keys else None
-
-                # For legacy records created before hashing was enabled
-                if not stored_hash:
-                    continue
+                stored_prev = row["previous_event_hash"]
+                stored_hash = row["event_hash"]
 
                 if stored_prev != expected_prev_hash:
                     return AuditChainVerificationResult(
@@ -514,7 +509,7 @@ class Storage:
                         is_valid=False,
                         tampered_event_id=row["event_id"],
                         tampered_index=idx,
-                        message=f"Audit chain broken at event '{row['event_id']}': predecessor hash mismatch (expected {expected_prev_hash[:8]}..., got {str(stored_prev)[:8]}...).",
+                        message=f"Audit chain broken at event '{row['event_id']}': predecessor hash mismatch (expected {expected_prev_hash[:8]}..., got {str(stored_prev)[:8]}...). Possible deletion or reordering.",
                     )
 
                 decision_val = str(row["decision"])
@@ -529,7 +524,7 @@ class Storage:
                         is_valid=False,
                         tampered_event_id=row["event_id"],
                         tampered_index=idx,
-                        message=f"Cryptographic signature mismatch at event '{row['event_id']}': contents modified out-of-band.",
+                        message=f"Cryptographic hash digest mismatch at event '{row['event_id']}': contents modified out-of-band.",
                     )
 
                 expected_prev_hash = stored_hash
@@ -539,7 +534,7 @@ class Storage:
                 total_events=len(rows),
                 verified_events=verified_count,
                 is_valid=True,
-                message=f"All {verified_count} cryptographic audit block signatures verified. Chain is fully intact.",
+                message=f"All {verified_count} SHA-256 hash-linked audit records verified. Ledger integrity is intact.",
             )
 
     # -------------------------------------------------------------

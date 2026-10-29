@@ -495,7 +495,7 @@ export const AdvancedTab: React.FC<AdvancedTabProps> = ({ initialSubTab = 'bench
 
               <div className="p-3 rounded bg-[#111417] border border-[#242C31] space-y-1">
                 <span className="text-[10px] font-mono uppercase text-[#38BDF8] font-semibold block">
-                  Guaranteed Protections
+                  Enforced Policy Protections
                 </span>
                 <p className="text-[#929CA3] leading-relaxed">
                   {findings?.scope_and_limitations?.enforced_guarantees ||
@@ -570,7 +570,7 @@ export const AdvancedTab: React.FC<AdvancedTabProps> = ({ initialSubTab = 'bench
                 Verified Security Invariants (Automated Gatekeeper Rules)
               </h3>
               <span className="text-xs font-mono text-[#5E6971]">
-                7 of 7 Formally Enforced
+                7 of 7 Automated Rules Active
               </span>
             </div>
 
