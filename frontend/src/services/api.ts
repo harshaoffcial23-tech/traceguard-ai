@@ -1,4 +1,9 @@
 import {
+  AgentDispatchResponse,
+  AgentPermissionsUpdateRequest,
+  AgentRecord,
+  AgentRegistrationRequest,
+  AuditChainVerificationResult,
   AuditEvent,
   AuthTokenResponse,
   FindingsSummary,
@@ -262,6 +267,76 @@ export async function runAutonomousAgent(params: {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'Autonomous agent run failed');
+  }
+  return res.json();
+}
+
+// -------------------------------------------------------------
+// Stage 5 & Stage 6 Connect & Audit Chain API Client Functions
+// -------------------------------------------------------------
+export async function fetchConnectAgents(): Promise<AgentRecord[]> {
+  const res = await authFetch(`${API_BASE}/connect/agents`);
+  if (!res.ok) throw new Error(`Failed to fetch connected agents: ${res.statusText}`);
+  return res.json();
+}
+
+export async function registerConnectAgent(req: AgentRegistrationRequest): Promise<AgentRecord> {
+  const res = await authFetch(`${API_BASE}/connect/agents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Failed to register agent');
+  }
+  return res.json();
+}
+
+export async function updateAgentPermissions(
+  agentId: string,
+  req: AgentPermissionsUpdateRequest
+): Promise<AgentRecord> {
+  const res = await authFetch(`${API_BASE}/connect/agents/${agentId}/permissions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Failed to update agent permissions');
+  }
+  return res.json();
+}
+
+export async function fetchConnectActivity(agentId?: string): Promise<AuditEvent[]> {
+  const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : '';
+  const res = await authFetch(`${API_BASE}/connect/activity${query}`);
+  if (!res.ok) throw new Error(`Failed to fetch agent activity: ${res.statusText}`);
+  return res.json();
+}
+
+export async function verifyAuditChain(): Promise<AuditChainVerificationResult> {
+  const res = await authFetch(`${API_BASE}/audit/verify-chain`);
+  if (!res.ok) throw new Error(`Failed to verify audit chain: ${res.statusText}`);
+  return res.json();
+}
+
+export async function dispatchAgentTool(req: {
+  agent_id: string;
+  tool_name?: string | null;
+  arguments?: Record<string, any>;
+  user_prompt?: string;
+  correlation_id?: string;
+}): Promise<AgentDispatchResponse> {
+  const res = await authFetch(`${API_BASE}/v1/agent/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Agent dispatch failed');
   }
   return res.json();
 }

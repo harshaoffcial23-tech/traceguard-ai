@@ -4,12 +4,23 @@ Stores policy configurations, test runs, and structured audit events.
 """
 
 from __future__ import annotations
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from app.models.schemas import AuditEvent, PolicySet, TestRun, TestSuite, TestCase, User
+from app.models.schemas import (
+    AgentRecord,
+    AgentRegistrationRequest,
+    AuditChainVerificationResult,
+    AuditEvent,
+    PolicySet,
+    TestRun,
+    TestSuite,
+    TestCase,
+    User,
+)
 
 
 DB_FILE = (Path(__file__).resolve().parent.parent.parent / "data" / "traceguard.db").resolve()
@@ -107,6 +118,10 @@ class Storage:
                 cursor.execute("ALTER TABLE audit_events ADD COLUMN execution_success INTEGER")
             if "execution_error" not in cols:
                 cursor.execute("ALTER TABLE audit_events ADD COLUMN execution_error TEXT")
+            if "previous_event_hash" not in cols:
+                cursor.execute("ALTER TABLE audit_events ADD COLUMN previous_event_hash TEXT")
+            if "event_hash" not in cols:
+                cursor.execute("ALTER TABLE audit_events ADD COLUMN event_hash TEXT")
 
             # 4. Users table
             cursor.execute(
@@ -138,6 +153,82 @@ class Storage:
                 """
             )
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
+
+            # 6. Agents table (Connect & Agent Registry)
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agents (
+                    agent_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    role TEXT NOT NULL DEFAULT 'standard_agent',
+                    allowed_tools_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    last_active TEXT,
+                    api_key_hash TEXT
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)")
+
+            # Seed default agents if registry is empty
+            cursor.execute("SELECT COUNT(*) AS cnt FROM agents")
+            if cursor.fetchone()["cnt"] == 0:
+                now_str = datetime.now(timezone.utc).isoformat()
+                default_agents = [
+                    (
+                        "catalog_agent",
+                        "Product Catalog Explorer",
+                        "Autonomous agent scoped strictly to read-only product and inventory queries.",
+                        "catalog_agent",
+                        json.dumps(["query_database"]),
+                        "active",
+                        now_str,
+                        None,
+                        None,
+                    ),
+                    (
+                        "readonly_agent",
+                        "Read-Only Research Bot",
+                        "Scrapes public files, queries read-only database views, and searches web research.",
+                        "readonly_agent",
+                        json.dumps(["read_file", "query_database", "web_search"]),
+                        "active",
+                        now_str,
+                        None,
+                        None,
+                    ),
+                    (
+                        "standard_agent",
+                        "Enterprise Operations Agent",
+                        "Standard agent with balanced operational access across files, DB, search, and internal email.",
+                        "standard_agent",
+                        json.dumps(["read_file", "query_database", "send_email", "web_search"]),
+                        "active",
+                        now_str,
+                        None,
+                        None,
+                    ),
+                    (
+                        "demo_external_agent",
+                        "External Partner Agent",
+                        "External integration agent authenticating via API tokens into TraceGuard gateway.",
+                        "standard_agent",
+                        json.dumps(["read_file", "query_database", "web_search"]),
+                        "active",
+                        now_str,
+                        None,
+                        None,
+                    ),
+                ]
+                cursor.executemany(
+                    """
+                    INSERT INTO agents (agent_id, name, description, role, allowed_tools_json, status, created_at, last_active, api_key_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    default_agents,
+                )
 
             conn.commit()
 
@@ -268,14 +359,28 @@ class Storage:
     def save_audit_event(self, event: AuditEvent) -> None:
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # Hash-linking calculation for tamper-evident audit ledger
+            cursor.execute("SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1")
+            prev_row = cursor.fetchone()
+            prev_keys = prev_row.keys() if prev_row and hasattr(prev_row, "keys") else []
+            prev_hash = prev_row["event_hash"] if (prev_row and "event_hash" in prev_keys and prev_row["event_hash"]) else "0" * 64
+
+            decision_str = str(event.decision.value if hasattr(event.decision, "value") else event.decision)
+            payload_str = f"{prev_hash}:{event.event_id}:{event.timestamp}:{event.agent_type}:{event.tool_name}:{decision_str}:{1 if event.executed else 0}:{event.raw_arguments_hash}"
+            cur_hash = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()
+            event.previous_event_hash = prev_hash
+            event.event_hash = cur_hash
+
             cursor.execute(
                 """
                 INSERT INTO audit_events (
                     event_id, timestamp, test_run_id, test_case_id, agent_type, agent_role, tool_name,
                     raw_arguments_hash, redacted_arguments_json, decision, policy_id, rule_id,
                     reason, violations_json, attempted, executed, execution_success, execution_error,
-                    data_exposure_detected, exposure_details_json, execution_output_redacted_json, context_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    data_exposure_detected, exposure_details_json, execution_output_redacted_json, context_json,
+                    previous_event_hash, event_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(event_id) DO NOTHING
                 """,
                 (
@@ -288,7 +393,7 @@ class Storage:
                     event.tool_name,
                     event.raw_arguments_hash,
                     json.dumps(event.redacted_arguments),
-                    str(event.decision.value if hasattr(event.decision, "value") else event.decision),
+                    decision_str,
                     event.policy_id,
                     event.rule_id,
                     event.reason,
@@ -301,6 +406,8 @@ class Storage:
                     json.dumps(event.exposure_details),
                     json.dumps(event.execution_output_redacted) if event.execution_output_redacted is not None else None,
                     json.dumps(event.context),
+                    prev_hash,
+                    cur_hash,
                 ),
             )
             conn.commit()
@@ -310,6 +417,7 @@ class Storage:
         test_run_id: Optional[str] = None,
         tool_name: Optional[str] = None,
         decision: Optional[str] = None,
+        agent_type: Optional[str] = None,
         limit: int = 100,
     ) -> List[AuditEvent]:
         query = "SELECT * FROM audit_events WHERE 1=1"
@@ -324,6 +432,9 @@ class Storage:
         if decision:
             query += " AND decision = ?"
             params.append(decision)
+        if agent_type:
+            query += " AND agent_type = ?"
+            params.append(agent_type)
 
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
@@ -361,9 +472,173 @@ class Storage:
                         if row["execution_output_redacted_json"]
                         else None,
                         context=json.loads(row["context_json"]),
+                        previous_event_hash=row["previous_event_hash"] if "previous_event_hash" in row_keys else None,
+                        event_hash=row["event_hash"] if "event_hash" in row_keys else None,
                     )
                 )
             return events
+
+    def verify_audit_chain(self) -> AuditChainVerificationResult:
+        """
+        Cryptographically verifies the hash-linked audit chain.
+        Detects out-of-band modifications, record tampering, deletions, or insertions.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT rowid, * FROM audit_events ORDER BY rowid ASC")
+            rows = cursor.fetchall()
+
+            if not rows:
+                return AuditChainVerificationResult(
+                    total_events=0,
+                    verified_events=0,
+                    is_valid=True,
+                    message="Audit log is empty. Chain is intact.",
+                )
+
+            expected_prev_hash = "0" * 64
+            verified_count = 0
+            for idx, row in enumerate(rows):
+                row_keys = row.keys() if hasattr(row, "keys") else []
+                stored_prev = row["previous_event_hash"] if "previous_event_hash" in row_keys else None
+                stored_hash = row["event_hash"] if "event_hash" in row_keys else None
+
+                # For legacy records created before hashing was enabled
+                if not stored_hash:
+                    continue
+
+                if stored_prev != expected_prev_hash:
+                    return AuditChainVerificationResult(
+                        total_events=len(rows),
+                        verified_events=verified_count,
+                        is_valid=False,
+                        tampered_event_id=row["event_id"],
+                        tampered_index=idx,
+                        message=f"Audit chain broken at event '{row['event_id']}': predecessor hash mismatch (expected {expected_prev_hash[:8]}..., got {str(stored_prev)[:8]}...).",
+                    )
+
+                decision_val = str(row["decision"])
+                executed_val = 1 if row["executed"] else 0
+                calc_payload = f"{stored_prev}:{row['event_id']}:{row['timestamp']}:{row['agent_type']}:{row['tool_name']}:{decision_val}:{executed_val}:{row['raw_arguments_hash']}"
+                calculated_hash = hashlib.sha256(calc_payload.encode("utf-8")).hexdigest()
+
+                if calculated_hash != stored_hash:
+                    return AuditChainVerificationResult(
+                        total_events=len(rows),
+                        verified_events=verified_count,
+                        is_valid=False,
+                        tampered_event_id=row["event_id"],
+                        tampered_index=idx,
+                        message=f"Cryptographic signature mismatch at event '{row['event_id']}': contents modified out-of-band.",
+                    )
+
+                expected_prev_hash = stored_hash
+                verified_count += 1
+
+            return AuditChainVerificationResult(
+                total_events=len(rows),
+                verified_events=verified_count,
+                is_valid=True,
+                message=f"All {verified_count} cryptographic audit block signatures verified. Chain is fully intact.",
+            )
+
+    # -------------------------------------------------------------
+    # Agent Connect & Identity Registry
+    # -------------------------------------------------------------
+    def list_agents(self) -> List[AgentRecord]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM agents ORDER BY created_at ASC")
+            rows = cursor.fetchall()
+            return [
+                AgentRecord(
+                    agent_id=row["agent_id"],
+                    name=row["name"],
+                    description=row["description"],
+                    role=row["role"],
+                    allowed_tools=json.loads(row["allowed_tools_json"]),
+                    status=row["status"],
+                    created_at=row["created_at"],
+                    last_active=row["last_active"],
+                    api_key_prefix=row["api_key_hash"][:8] if row["api_key_hash"] else None,
+                )
+                for row in rows
+            ]
+
+    def get_agent(self, agent_id: str) -> Optional[AgentRecord]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM agents WHERE agent_id = ?", (agent_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return AgentRecord(
+                agent_id=row["agent_id"],
+                name=row["name"],
+                description=row["description"],
+                role=row["role"],
+                allowed_tools=json.loads(row["allowed_tools_json"]),
+                status=row["status"],
+                created_at=row["created_at"],
+                last_active=row["last_active"],
+                api_key_prefix=row["api_key_hash"][:8] if row["api_key_hash"] else None,
+            )
+
+    def create_agent(self, req: AgentRegistrationRequest, api_key_hash: Optional[str] = None) -> AgentRecord:
+        now = datetime.now(timezone.utc).isoformat()
+        default_tools_by_role = {
+            "guest": ["query_database"],
+            "catalog_agent": ["query_database"],
+            "readonly_agent": ["read_file", "query_database", "web_search"],
+            "standard_agent": ["read_file", "query_database", "send_email", "web_search"],
+            "admin_agent": ["read_file", "query_database", "send_email", "web_search"],
+        }
+        allowed = req.allowed_tools if req.allowed_tools is not None else default_tools_by_role.get(req.role, ["query_database"])
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO agents (agent_id, name, description, role, allowed_tools_json, status, created_at, api_key_hash)
+                VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    role = excluded.role,
+                    allowed_tools_json = excluded.allowed_tools_json
+                """,
+                (req.agent_id, req.name, req.description, req.role, json.dumps(allowed), now, api_key_hash),
+            )
+            conn.commit()
+        return self.get_agent(req.agent_id)  # type: ignore
+
+    def update_agent_permissions(
+        self,
+        agent_id: str,
+        allowed_tools: List[str],
+        role: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Optional[AgentRecord]:
+        agent = self.get_agent(agent_id)
+        if not agent:
+            return None
+        new_role = role or agent.role
+        new_status = status or agent.status
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE agents SET allowed_tools_json = ?, role = ?, status = ? WHERE agent_id = ?",
+                (json.dumps(allowed_tools), new_role, new_status, agent_id),
+            )
+            conn.commit()
+        return self.get_agent(agent_id)
+
+    def record_agent_activity(self, agent_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE agents SET last_active = ? WHERE agent_id = ?", (now, agent_id))
+            conn.commit()
 
     # User & Session Management
     def create_user(

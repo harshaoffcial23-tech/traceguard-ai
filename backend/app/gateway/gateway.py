@@ -174,7 +174,14 @@ class SecurityGateway:
             )
 
         # 1. Agent Identity & Role Capability Scoping
-        if request.agent_type not in self.allowed_agent_types:
+        db_agent = None
+        if self.storage:
+            try:
+                db_agent = self.storage.get_agent(request.agent_type)
+            except Exception:
+                db_agent = None
+
+        if request.agent_type not in self.allowed_agent_types and not db_agent:
             decision = GatewayDecision(
                 allowed=False,
                 decision=DecisionOutcome.DENY,
@@ -186,6 +193,32 @@ class SecurityGateway:
             return self._build_denied_response(
                 request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
             )
+
+        if db_agent:
+            if db_agent.status != "active":
+                decision = GatewayDecision(
+                    allowed=False,
+                    decision=DecisionOutcome.DENY,
+                    policy_id=self.policy_engine.policy_set.id,
+                    rule_id="AGENT_SUSPENDED",
+                    reason=f"Agent '{request.agent_type}' is currently suspended or disabled in security registry.",
+                    violations=[f"Suspended agent: {request.agent_type}"],
+                )
+                return self._build_denied_response(
+                    request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+                )
+            if request.tool_name not in db_agent.allowed_tools:
+                decision = GatewayDecision(
+                    allowed=False,
+                    decision=DecisionOutcome.DENY,
+                    policy_id=self.policy_engine.policy_set.id,
+                    rule_id="AGENT_PERMISSION_DENIED",
+                    reason=f"Agent '{request.agent_type}' permissions violation: Tool '{request.tool_name}' is not in permitted toolset {db_agent.allowed_tools}.",
+                    violations=[f"Tool '{request.tool_name}' exceeds agent '{request.agent_type}' permissions"],
+                )
+                return self._build_denied_response(
+                    request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+                )
 
         # Validate registered tool name
         valid_tools = {"read_file", "query_database", "send_email", "web_search"}
@@ -219,7 +252,7 @@ class SecurityGateway:
                 )
 
         # Resolve server-side authorized role from identity registry
-        server_authorized_role = self.trusted_identity_roles.get(request.agent_type, "guest")
+        server_authorized_role = db_agent.role if db_agent else self.trusted_identity_roles.get(request.agent_type, "guest")
         client_requested_role = getattr(request, "agent_role", None)
 
         # Privilege hierarchy: guest (1) < catalog_agent (2) < readonly_agent (3) < standard_agent (4) < admin_agent (5)
@@ -231,24 +264,25 @@ class SecurityGateway:
             "admin_agent": 5,
         }
         server_level = role_hierarchy.get(server_authorized_role, 1)
-        client_level = role_hierarchy.get(client_requested_role, server_level) if client_requested_role else server_level
 
-        # Detect and deny client-side privilege escalation / identity spoofing
-        if client_level > server_level:
-            decision = GatewayDecision(
-                allowed=False,
-                decision=DecisionOutcome.DENY,
-                policy_id=self.policy_engine.policy_set.id,
-                rule_id="IDENTITY_ROLE_SPOOF_DENIED",
-                reason=f"Identity authorization violation: Agent identity '{request.agent_type}' is authorized for role '{server_authorized_role}' (level {server_level}), but attempted unverified elevation to '{client_requested_role}' (level {client_level}).",
-                violations=[f"Unverified role elevation attempt from '{server_authorized_role}' to '{client_requested_role}'"],
-            )
-            return self._build_denied_response(
-                request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
-            )
-
-        # Effective role is bounded by server-side authorization (privilege dropping permitted, elevation denied)
-        effective_role = client_requested_role if (client_requested_role and client_level <= server_level) else server_authorized_role
+        if client_requested_role:
+            client_level = role_hierarchy.get(client_requested_role, server_level)
+            # Detect and deny client-side privilege escalation / identity spoofing
+            if client_level > server_level:
+                decision = GatewayDecision(
+                    allowed=False,
+                    decision=DecisionOutcome.DENY,
+                    policy_id=self.policy_engine.policy_set.id,
+                    rule_id="IDENTITY_ROLE_SPOOF_DENIED",
+                    reason=f"Identity authorization violation: Agent identity '{request.agent_type}' is authorized for role '{server_authorized_role}' (level {server_level}), but attempted unverified elevation to '{client_requested_role}' (level {client_level}).",
+                    violations=[f"Unverified role elevation attempt from '{server_authorized_role}' to '{client_requested_role}'"],
+                )
+                return self._build_denied_response(
+                    request, decision, event_id, timestamp, raw_hash, redacted_args, test_run_id, test_case_id
+                )
+            effective_role = client_requested_role
+        else:
+            effective_role = server_authorized_role
 
         # Scoped capability check based on effective role
         role_capabilities = {
@@ -438,6 +472,7 @@ class SecurityGateway:
         if self.storage:
             try:
                 self.storage.save_audit_event(audit_event)
+                self.storage.record_agent_activity(request.agent_type)
             except Exception:
                 pass
         return decision, execution_result, audit_event
@@ -489,6 +524,7 @@ class SecurityGateway:
         if self.storage:
             try:
                 self.storage.save_audit_event(audit_event)
+                self.storage.record_agent_activity(request.agent_type)
             except Exception:
                 pass
         return decision, exec_res, audit_event

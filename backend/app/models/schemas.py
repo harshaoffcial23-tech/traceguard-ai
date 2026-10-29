@@ -14,6 +14,7 @@ class DecisionOutcome(str, Enum):
     ESCALATE = "escalate"
     TIMEOUT = "timeout"
     ERROR = "error"
+    NO_ACTION = "no_action"
 
 
 class UserRole(str, Enum):
@@ -69,7 +70,7 @@ class ToolInvocationRequest(BaseModel):
     tool_name: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
     agent_type: str = "mock"
-    agent_role: str = "standard_agent"  # "standard_agent", "readonly_agent", "catalog_agent", "admin_agent"
+    agent_role: Optional[str] = None  # None = use server-authorized role from registry
     session_id: Optional[str] = None
     user_prompt: Optional[str] = None
     context: Dict[str, Any] = Field(default_factory=dict)
@@ -124,6 +125,8 @@ class AuditEvent(BaseModel):
     exposure_details: List[str] = Field(default_factory=list)
     execution_output_redacted: Optional[Any] = None
     context: Dict[str, Any] = Field(default_factory=dict)
+    previous_event_hash: Optional[str] = None
+    event_hash: Optional[str] = None
 
 
 class PolicyRule(BaseModel):
@@ -220,3 +223,74 @@ class TestRun(BaseModel):
     completed_at: Optional[str] = None
     metrics: TestRunMetrics = Field(default_factory=TestRunMetrics)
     results: List[TestCaseResult] = Field(default_factory=list)
+
+
+# -------------------------------------------------------------
+# Stage 4: Agent Integration API Contract Schemas
+# -------------------------------------------------------------
+class AgentDispatchRequest(BaseModel):
+    agent_id: str = Field(..., description="Agent identity / identifier")
+    correlation_id: Optional[str] = Field(None, description="Client-provided request or correlation ID")
+    tool_name: Optional[str] = Field(None, description="Name of the tool to invoke. If None/empty, treated as no-action.")
+    arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments for the tool")
+    session_id: Optional[str] = Field(None, description="Session ID for tracking execution limits")
+    user_prompt: Optional[str] = Field(None, description="User instruction or prompt that led to this tool call")
+    context: Dict[str, Any] = Field(default_factory=dict, description="Additional caller context")
+    justification: Optional[str] = Field(None, description="Optional agent justification for requesting this action")
+
+
+class AgentDispatchResponse(BaseModel):
+    request_id: str
+    decision: DecisionOutcome
+    policy_id: Optional[str] = None
+    rule_id: Optional[str] = None
+    reason: str
+    violations: List[str] = Field(default_factory=list)
+    executed: bool
+    execution_status: str  # "executed", "not_executed", "failed", "no_action", "timed_out"
+    output: Optional[Any] = None
+    error: Optional[str] = None
+    audit_event_id: Optional[str] = None
+    timestamp: str
+
+
+# -------------------------------------------------------------
+# Stage 5: Agent Connect & Management Schemas
+# -------------------------------------------------------------
+class AgentRecord(BaseModel):
+    agent_id: str
+    name: str
+    description: Optional[str] = None
+    role: str = "standard_agent"  # guest, catalog_agent, readonly_agent, standard_agent, admin_agent
+    allowed_tools: List[str] = Field(default_factory=list)
+    status: str = "active"  # "active", "suspended", "disconnected"
+    created_at: str
+    last_active: Optional[str] = None
+    api_key_prefix: Optional[str] = None
+
+
+class AgentRegistrationRequest(BaseModel):
+    agent_id: str
+    name: str
+    description: Optional[str] = None
+    role: str = "standard_agent"
+    allowed_tools: Optional[List[str]] = None
+
+
+class AgentPermissionsUpdateRequest(BaseModel):
+    role: Optional[str] = None
+    allowed_tools: List[str]
+    status: Optional[str] = None
+
+
+# -------------------------------------------------------------
+# Stage 6: Audit Chain Integrity Verification Schema
+# -------------------------------------------------------------
+class AuditChainVerificationResult(BaseModel):
+    total_events: int
+    verified_events: int
+    is_valid: bool
+    tampered_event_id: Optional[str] = None
+    tampered_index: Optional[int] = None
+    message: str
+

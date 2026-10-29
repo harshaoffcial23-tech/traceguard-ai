@@ -42,7 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const primaryTabs = [
     { id: 'home', label: 'Overview', icon: Home },
     { id: 'playground', label: 'Security Playground', icon: Play },
-    { id: 'agent_demo', label: 'Agent Demo', icon: Bot },
+    { id: 'agent_demo', label: 'Agent Connect', icon: Bot },
     { id: 'activity', label: 'Activity & Audit', icon: Activity },
   ];
 

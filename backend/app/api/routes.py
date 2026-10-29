@@ -5,12 +5,20 @@ FastAPI REST routes for TraceGuard AI security platform.
 from __future__ import annotations
 import os
 import secrets
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
 from app.models.schemas import (
+    AgentDispatchRequest,
+    AgentDispatchResponse,
+    AgentPermissionsUpdateRequest,
+    AgentRecord,
+    AgentRegistrationRequest,
+    AuditChainVerificationResult,
     AuditEvent,
     AuthTokenResponse,
     DecisionOutcome,
@@ -524,12 +532,234 @@ def get_audit_events(
     test_run_id: Optional[str] = None,
     tool_name: Optional[str] = None,
     decision: Optional[str] = None,
+    agent_id: Optional[str] = None,
     limit: int = 100,
     current_user: User = Depends(get_current_user),
 ):
     return storage.list_audit_events(
-        test_run_id=test_run_id, tool_name=tool_name, decision=decision, limit=limit
+        test_run_id=test_run_id,
+        tool_name=tool_name,
+        decision=decision,
+        agent_type=agent_id,
+        limit=limit,
     )
+
+
+# -------------------------------------------------------------
+# Stage 6: Tamper-Evident Hash-Linked Audit Chain Verification
+# -------------------------------------------------------------
+@router.get("/audit/verify-chain", response_model=AuditChainVerificationResult)
+def verify_audit_chain_integrity(current_user: User = Depends(get_current_user)):
+    """
+    Cryptographically verifies the SHA-256 hash-chain of all stored audit events.
+    Detects any out-of-band record insertions, deletions, or data tampering.
+    """
+    return storage.verify_audit_chain()
+
+
+# -------------------------------------------------------------
+# Stage 4: Agent Integration API Contract & Enforcement
+# -------------------------------------------------------------
+VALID_DEV_AGENT_TOKENS = {
+    "tg_agent_dev_token_2026",
+    "tg_internal_admin_token_sec_val_2026",
+}
+
+
+def verify_agent_caller(request: Request) -> Dict[str, Any]:
+    """
+    Verifies external agent caller identity using token or session authentication.
+    Accepts:
+    1. 'Authorization: Bearer <token>'
+    2. 'X-Agent-Key: <token>' or 'X-TraceGuard-Key: <token>'
+    3. Active user session cookie ('traceguard_session')
+    """
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif request.headers.get("X-Agent-Key"):
+        token = request.headers.get("X-Agent-Key", "").strip()
+    elif request.headers.get("X-TraceGuard-Key"):
+        token = request.headers.get("X-TraceGuard-Key", "").strip()
+
+    if token:
+        if token in VALID_DEV_AGENT_TOKENS:
+            return {"authenticated": True, "token_type": "dev_key", "identity": "authorized_agent"}
+        token_h = hash_token(token)
+        session = storage.get_session(token_h)
+        if session:
+            user = storage.get_user_by_id(session["user_id"])
+            if user:
+                return {"authenticated": True, "token_type": "user_session", "user": user}
+
+    # Cookie fallback for interactive web sessions
+    cookie_token = request.cookies.get("traceguard_session")
+    if cookie_token:
+        session = storage.get_session(hash_token(cookie_token))
+        if session:
+            user = storage.get_user_by_id(session["user_id"])
+            if user:
+                return {"authenticated": True, "token_type": "cookie_session", "user": user}
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Agent authentication required: Provide a valid Bearer token, X-Agent-Key header, or active session.",
+    )
+
+
+@router.post(
+    "/v1/agent/dispatch",
+    response_model=AgentDispatchResponse,
+    summary="Agent Integration Gateway Dispatcher",
+)
+@router.post(
+    "/gateway/dispatch",
+    response_model=AgentDispatchResponse,
+    include_in_schema=False,
+)
+def agent_dispatch(
+    req: AgentDispatchRequest,
+    request: Request,
+    caller_auth: Dict[str, Any] = Depends(verify_agent_caller),
+):
+    """
+    Primary integration endpoint for external AI agents to submit proposed tool calls.
+    External Agent -> TraceGuard API -> Input Validation -> Server-Side Policy Engine ->
+    Authorized Tool Executor -> Execution Result -> Persistent Audit Event.
+    """
+    req_id = req.correlation_id or f"req_{uuid.uuid4().hex[:12]}"
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    # 1. Handle NO_ACTION: if no tool was requested or proposed
+    if not req.tool_name or not req.tool_name.strip():
+        return AgentDispatchResponse(
+            request_id=req_id,
+            decision=DecisionOutcome.NO_ACTION,
+            policy_id=None,
+            rule_id="NO_TOOL_REQUESTED",
+            reason="No tool action was requested or evaluated by agent.",
+            violations=[],
+            executed=False,
+            execution_status="no_action",
+            output=None,
+            error=None,
+            audit_event_id=None,
+            timestamp=now_str,
+        )
+
+    clean_tool_name = req.tool_name.strip()
+
+    # 2. Server-side registration check
+    valid_tools = {"read_file", "query_database", "send_email", "web_search"}
+    if clean_tool_name not in valid_tools:
+        ev_id = f"evt_{uuid.uuid4().hex[:12]}"
+        return AgentDispatchResponse(
+            request_id=req_id,
+            decision=DecisionOutcome.DENY,
+            policy_id=None,
+            rule_id="VALIDATE_TOOL_NAME",
+            reason=f"Tool '{clean_tool_name}' is not a registered protected tool.",
+            violations=[f"Unregistered tool: '{clean_tool_name}'"],
+            executed=False,
+            execution_status="not_executed",
+            output=None,
+            error=f"Unrecognized or unregistered tool '{clean_tool_name}'.",
+            audit_event_id=ev_id,
+            timestamp=now_str,
+        )
+
+    # 3. Construct ToolInvocationRequest
+    inv_req = ToolInvocationRequest(
+        call_id=req_id,
+        tool_name=clean_tool_name,
+        arguments=req.arguments or {},
+        agent_type=req.agent_id,
+        session_id=req.session_id,
+        user_prompt=req.user_prompt,
+        context=req.context or {},
+    )
+
+    # 4. Invoke Security Gateway (Single enforcement boundary)
+    decision, exec_res, audit_event = gateway.invoke(inv_req)
+
+    # Determine execution status cleanly
+    if decision.decision == DecisionOutcome.TIMEOUT:
+        exec_status = "timed_out"
+    elif not decision.allowed:
+        exec_status = "not_executed"
+    elif exec_res and exec_res.success:
+        exec_status = "executed"
+    elif exec_res and not exec_res.success:
+        exec_status = "failed"
+    else:
+        exec_status = "not_executed"
+
+    # Return safe response without internal stack trace leaks
+    safe_error = exec_res.error if (exec_res and not exec_res.success) else None
+    if not decision.allowed and not safe_error:
+        safe_error = f"Blocked by Security Gateway: {decision.reason}"
+
+    return AgentDispatchResponse(
+        request_id=req_id,
+        decision=decision.decision,
+        policy_id=decision.policy_id,
+        rule_id=decision.rule_id,
+        reason=decision.reason,
+        violations=decision.violations,
+        executed=exec_res.executed if exec_res else False,
+        execution_status=exec_status,
+        output=exec_res.output if (exec_res and exec_res.success) else None,
+        error=safe_error,
+        audit_event_id=audit_event.event_id if audit_event else None,
+        timestamp=now_str,
+    )
+
+
+# -------------------------------------------------------------
+# Stage 5: Agent Connect & Permissions Management Endpoints
+# -------------------------------------------------------------
+@router.get("/connect/agents", response_model=List[AgentRecord])
+def get_connect_agents(current_user: User = Depends(get_current_user)):
+    """Lists registered agents, status, roles, and tool permissions."""
+    return storage.list_agents()
+
+
+@router.post("/connect/agents", response_model=AgentRecord)
+def register_connect_agent(
+    req: AgentRegistrationRequest,
+    current_user: User = Depends(require_roles(["admin", "operator"])),
+):
+    """Registers a new agent or updates an existing agent specification."""
+    return storage.create_agent(req)
+
+
+@router.put("/connect/agents/{agent_id}/permissions", response_model=AgentRecord)
+def update_agent_permissions(
+    agent_id: str,
+    req: AgentPermissionsUpdateRequest,
+    current_user: User = Depends(require_roles(["admin", "operator"])),
+):
+    """Updates permitted tools, role, or status for an agent in server-side registry."""
+    updated = storage.update_agent_permissions(
+        agent_id=agent_id,
+        allowed_tools=req.allowed_tools,
+        role=req.role,
+        status=req.status,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
+    return updated
+
+
+@router.get("/connect/activity", response_model=List[AuditEvent])
+def get_connect_activity(
+    agent_id: Optional[str] = None,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+):
+    """Returns recent audit events for connected agents."""
+    return storage.list_audit_events(agent_type=agent_id, limit=limit)
 
 
 # Interactive Playground

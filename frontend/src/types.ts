@@ -266,3 +266,53 @@ export interface RegisterCredentials {
   full_name: string;
   role?: UserRole;
 }
+
+export interface AgentRecord {
+  agent_id: string;
+  name: string;
+  description?: string;
+  role: string;
+  allowed_tools: string[];
+  status: 'active' | 'suspended' | 'disconnected';
+  created_at: string;
+  last_active?: string | null;
+  api_key_prefix?: string | null;
+}
+
+export interface AgentPermissionsUpdateRequest {
+  role?: string;
+  allowed_tools: string[];
+  status?: string;
+}
+
+export interface AgentRegistrationRequest {
+  agent_id: string;
+  name: string;
+  description?: string;
+  role: string;
+  allowed_tools?: string[];
+}
+
+export interface AgentDispatchResponse {
+  request_id: string;
+  decision: 'allow' | 'deny' | 'timeout' | 'error' | 'no_action' | 'escalate';
+  policy_id?: string | null;
+  rule_id?: string | null;
+  reason: string;
+  violations: string[];
+  executed: boolean;
+  execution_status: 'executed' | 'not_executed' | 'failed' | 'no_action' | 'timed_out';
+  output?: any;
+  error?: string | null;
+  audit_event_id?: string | null;
+  timestamp: string;
+}
+
+export interface AuditChainVerificationResult {
+  total_events: number;
+  verified_events: number;
+  is_valid: boolean;
+  tampered_event_id?: string | null;
+  tampered_index?: number | null;
+  message: string;
+}
